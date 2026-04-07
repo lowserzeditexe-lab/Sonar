@@ -82,9 +82,13 @@ export async function killSandbox(sandboxId) {
 }
 
 /**
- * Sync latest generated code to the agent's VS Code workspace.
- * Called after each generation/chat. Fire-and-forget (non-blocking).
+ * Deploy project to Vercel — real permanent deployment.
+ * Returns { url, deployment_id, project_name, ready_state }
  */
+export async function deployToVercel(projectId) {
+  const res = await api.post("/api/deploy/vercel", { project_id: projectId });
+  return res.data;
+}
 export async function syncCodeToWorkspace(projectId) {
   try {
     const res = await api.post(`/api/projects/${projectId}/codebase/sync-code`);

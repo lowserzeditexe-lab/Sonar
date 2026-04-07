@@ -423,10 +423,6 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
   };
 
   const handleDeploy = () => {
-    // If sandbox not yet deployed, trigger it now (Deploy button click)
-    if (!sandboxUrl && previewReady && currentCode) {
-      deployCodeToSandbox(currentCode);
-    }
     setShowDeploy(true);
   };
 
@@ -634,7 +630,11 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
         onClose={() => setShowDeploy(false)}
         projectName={projectName}
         isDark={isDark}
-        liveUrl={sandboxUrl}
+        projectId={activeTaskId && !activeTaskId.startsWith("task-") && !activeTaskId.startsWith("demo-") ? activeTaskId : null}
+        existingVercelUrl={(() => {
+          const t = tasks.find(t => t.id === activeTaskId);
+          return t?._project?.vercel_url || null;
+        })()}
       />
     </div>
   );

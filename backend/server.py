@@ -1101,6 +1101,136 @@ async def delete_sandbox(sandbox_id: str, req: Request):
 
 
 # ──────────────────────────────────────────────────────────────
+# Vercel real deployment
+# ──────────────────────────────────────────────────────────────
+
+import hashlib as _hashlib
+import re as _re
+
+
+def _slugify(name: str) -> str:
+    """Convert project name to a valid Vercel slug (lowercase, hyphens only)."""
+    s = name.lower().strip()
+    s = _re.sub(r"[^a-z0-9\-]", "-", s)
+    s = _re.sub(r"-+", "-", s).strip("-")
+    return s[:50] or "sonar-app"
+
+
+async def _deploy_to_vercel(html: str, project_name: str) -> dict:
+    """
+    Deploy a standalone HTML string to Vercel as a static project.
+    Returns { url, deployment_id, project_name }
+    """
+    token = os.environ.get("VERCEL_API_TOKEN", "")
+    if not token:
+        raise ValueError("VERCEL_API_TOKEN not configured")
+
+    slug = _slugify(project_name)
+    headers_base = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        # 1. Upload file
+        html_bytes = html.encode("utf-8")
+        sha1 = _hashlib.sha1(html_bytes).hexdigest()
+
+        upload_r = await client.post(
+            "https://api.vercel.com/v2/files",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/octet-stream",
+                "x-vercel-digest": sha1,
+            },
+            content=html_bytes,
+        )
+        if upload_r.status_code not in (200, 201):
+            raise RuntimeError(f"Vercel file upload failed: {upload_r.status_code} {upload_r.text[:200]}")
+
+        # 2. Create deployment
+        deploy_payload = {
+            "name": slug,
+            "files": [{"file": "index.html", "sha": sha1, "size": len(html_bytes)}],
+            "projectSettings": {"framework": None},
+            "target": "production",
+        }
+        deploy_r = await client.post(
+            "https://api.vercel.com/v13/deployments",
+            headers=headers_base,
+            json=deploy_payload,
+        )
+        if deploy_r.status_code not in (200, 201):
+            raise RuntimeError(f"Vercel deployment failed: {deploy_r.status_code} {deploy_r.text[:300]}")
+
+        data = deploy_r.json()
+        raw_url = data.get("url", "")
+        deployment_url = f"https://{raw_url}" if raw_url and not raw_url.startswith("http") else raw_url
+
+        return {
+            "deployment_url": deployment_url,
+            "deployment_id": data.get("id", ""),
+            "project_name": slug,
+            "ready_state": data.get("readyState", "INITIALIZING"),
+        }
+
+
+class VercelDeployRequest(BaseModel):
+    project_id: str
+
+
+@api_router.post("/deploy/vercel")
+async def deploy_vercel(request: VercelDeployRequest, current_user: User = Depends(get_current_user)):
+    """
+    Deploy the project's generated code to Vercel as a standalone static app.
+    Returns a real permanent vercel.app URL.
+    """
+    token = os.environ.get("VERCEL_API_TOKEN", "")
+    if not token:
+        raise HTTPException(status_code=500, detail="VERCEL_API_TOKEN not configured on the server")
+
+    project_doc = await db.projects.find_one(
+        {"id": request.project_id, "user_id": current_user.id},
+        {"_id": 0},
+    )
+    if not project_doc:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    code = project_doc.get("code", "")
+    if not code or len(code) < 10:
+        raise HTTPException(status_code=400, detail="No generated code to deploy")
+
+    name = project_doc.get("name", "sonar-app")
+
+    # Build the standalone HTML (same as E2B preview)
+    html = _generate_preview_html(code)
+
+    try:
+        result = await _deploy_to_vercel(html, name)
+    except Exception as e:
+        logger.error(f"Vercel deployment failed for project {request.project_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Deployment failed: {str(e)}")
+
+    # Store deployment URL in project
+    await db.projects.update_one(
+        {"id": request.project_id, "user_id": current_user.id},
+        {"$set": {
+            "vercel_url": result["deployment_url"],
+            "vercel_deployment_id": result["deployment_id"],
+            "vercel_deployed_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+
+    return {
+        "url": result["deployment_url"],
+        "deployment_id": result["deployment_id"],
+        "project_name": result["project_name"],
+        "ready_state": result["ready_state"],
+    }
+
+
+# ──────────────────────────────────────────────────────────────
 # E2B VS Code (code-server) codebase per project
 # ──────────────────────────────────────────────────────────────
 
