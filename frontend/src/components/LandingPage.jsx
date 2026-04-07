@@ -577,6 +577,17 @@ export default function LandingPage({ onStart, tasks = [], onSelectTask, onClose
           task={codebaseTask}
           onClose={() => setCodebaseTask(null)}
           isDark={isDark}
+          // Pass stored provision info from the project (if any)
+          provisionId={codebaseTask._project?.vscode_provision_id || null}
+          provisionStatus={
+            codebaseTask._project?.vscode_url
+              ? "ready"
+              : codebaseTask._project?.vscode_provision_id
+              ? "installing"   // still in progress if no URL yet
+              : null
+          }
+          initialVsUrl={codebaseTask._project?.vscode_url || null}
+          initialVsPassword={codebaseTask._project?.vscode_password || null}
         />
       )}
       {/* Login modal */}

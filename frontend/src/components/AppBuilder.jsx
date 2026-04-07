@@ -8,7 +8,7 @@ import ShareModal from "./ShareModal";
 import DeployPanel from "./DeployPanel";
 import CodebaseModal from "./CodebaseModal";
 import { AGENT_STEPS, MOCK_LOGS } from "../data/mockData";
-import { createProject, updateProject, deleteProject, projectToTask, generateCode, chatWithCode, deploySandbox, killSandbox, attachCodebaseToProject } from "../api/projects";
+import { createProject, updateProject, deleteProject, projectToTask, generateCode, chatWithCode, deploySandbox, killSandbox, attachCodebaseToProject, getProvisionStatus } from "../api/projects";
 
 // Agent metadata with mode-specific logs
 const AGENT_META_S1 = {
@@ -64,7 +64,39 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
   // VS Code codebase modal state
   const [showCodebaseModal, setShowCodebaseModal] = useState(false);
 
-  // E2B sandbox state
+  // Background provision tracking (survives modal close)
+  const [activeProvisionId, setActiveProvisionId] = useState(null);
+  const [activeProvisionStatus, setActiveProvisionStatus] = useState(null); // starting|sandbox_created|installing|configuring|ready|error
+  const [activeProvisionProjectId, setActiveProvisionProjectId] = useState(null);
+  const provisionPollRef = useRef(null);
+
+  // Start / manage background provision polling
+  const startProvisionPolling = useCallback((provisionId, projectId) => {
+    if (provisionPollRef.current) clearInterval(provisionPollRef.current);
+    provisionPollRef.current = setInterval(async () => {
+      try {
+        const data = await getProvisionStatus(provisionId);
+        setActiveProvisionStatus(data.status);
+        if (data.status === "ready") {
+          clearInterval(provisionPollRef.current);
+          // Attach to project now that it's ready
+          if (projectId) {
+            try {
+              await attachCodebaseToProject(projectId, provisionId);
+            } catch (e) {
+              console.warn("Auto-attach failed:", e);
+            }
+          }
+        } else if (data.status === "error") {
+          clearInterval(provisionPollRef.current);
+        }
+      } catch (err) {
+        console.warn("Background provision poll failed:", err);
+      }
+    }, 3000);
+  }, []);
+
+  // E2B sandbox state (preview)
   const [sandboxUrl, setSandboxUrl] = useState(null);
   const [sandboxId, setSandboxId] = useState(null);
   const [isSandboxLoading, setIsSandboxLoading] = useState(false);
@@ -120,11 +152,12 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
         setTasks(prev => [newTask, ...prev.filter(t => t.id !== taskId)]);
         setActiveTaskId(taskId);
 
-        // Attach pre-provisioned VS Code sandbox if available
+        // Track provision in background — polling continues after modal closes
         if (provisionId) {
-          attachCodebaseToProject(taskId, provisionId).catch(err => {
-            console.warn("Failed to attach VS Code provision to project:", err);
-          });
+          setActiveProvisionId(provisionId);
+          setActiveProvisionProjectId(taskId);
+          setActiveProvisionStatus("starting");
+          startProvisionPolling(provisionId, taskId);
         }
 
         return taskId;
@@ -391,12 +424,17 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
   const handleReset = () => {
     if (timerRef.current) clearInterval(timerRef.current);
     if (abortRef.current) abortRef.current.abort();
+    if (provisionPollRef.current) clearInterval(provisionPollRef.current);
     // Kill E2B sandbox if active
     if (sandboxId) {
       killSandbox(sandboxId).catch(() => {});
       setSandboxUrl(null);
       setSandboxId(null);
     }
+    // Clear provision tracking
+    setActiveProvisionId(null);
+    setActiveProvisionStatus(null);
+    setActiveProvisionProjectId(null);
     hasStarted.current = false;
     onReset();
   };
@@ -467,13 +505,30 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
   return (
     <div className="flex flex-col overflow-hidden" style={{ height: "100vh", background: isDark ? "#0a0a0a" : "linear-gradient(to bottom, #7cc0e6 0%, #a8d5ef 35%, #bdddf3 55%, #95cae8 100%)" }}>
       {/* VS Code Codebase Modal */}
-      {showCodebaseModal && activeTaskId && !activeTaskId.startsWith("task-") && !activeTaskId.startsWith("demo-") && (
-        <CodebaseModal
-          task={{ id: activeTaskId, projectName }}
-          onClose={() => setShowCodebaseModal(false)}
-          isDark={isDark}
-        />
-      )}
+      {showCodebaseModal && activeTaskId && !activeTaskId.startsWith("task-") && !activeTaskId.startsWith("demo-") && (() => {
+        const activeTask = tasks.find(t => t.id === activeTaskId);
+        const proj = activeTask?._project;
+        const isActiveProvision = activeTaskId === activeProvisionProjectId;
+        return (
+          <CodebaseModal
+            task={{ id: activeTaskId, projectName }}
+            onClose={() => setShowCodebaseModal(false)}
+            isDark={isDark}
+            provisionId={isActiveProvision ? activeProvisionId : (proj?.vscode_provision_id || null)}
+            provisionStatus={
+              isActiveProvision
+                ? activeProvisionStatus
+                : proj?.vscode_url
+                ? "ready"
+                : proj?.vscode_provision_id
+                ? "installing"
+                : null
+            }
+            initialVsUrl={proj?.vscode_url || null}
+            initialVsPassword={proj?.vscode_password || null}
+          />
+        );
+      })()}
       <TopBar
         isGenerating={isGenerating}
         onDeploy={handleDeploy}
