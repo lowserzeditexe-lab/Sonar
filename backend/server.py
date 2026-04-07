@@ -1244,30 +1244,36 @@ def _generate_vscode_password(length: int = 20) -> str:
     return ''.join(_secrets.choice(alphabet) for _ in range(length))
 
 
-def _start_codeserver_and_wait(sandbox, timeout_s: int = 40) -> None:
+def _start_codeserver_and_wait(sandbox, timeout_s: int = 45) -> None:
     """
-    Start code-server in background and block until port 8080 is listening.
+    Start code-server via E2B background=True and poll until port 8080 is LISTEN.
+    background=True is the correct E2B way to run persistent services.
     Raises RuntimeError if code-server doesn't come up within timeout_s seconds.
     """
-    # Launch using shell background so the process persists
+    # background=True: E2B SDK runs the process detached — correct for long-running services
     sandbox.commands.run(
-        "HOME=/home/user setsid /home/user/.local/bin/code-server "
-        "--bind-addr 0.0.0.0:8080 /home/user/workspace "
-        "> /home/user/code-server.log 2>&1 &",
-        timeout=15,
+        "HOME=/home/user /home/user/.local/bin/code-server "
+        "/home/user/workspace > /home/user/code-server.log 2>&1",
+        background=True,
     )
-    # Poll until port 8080 is bound
+    # Poll until port 8080 is in LISTEN state
     for _ in range(timeout_s):
         try:
             check = sandbox.commands.run(
-                "ss -tlnp 2>/dev/null | grep -c :8080 || true",
+                "ss -tlnp 2>/dev/null | grep -c ':8080' || echo 0",
                 timeout=5,
             )
             if check.stdout.strip() not in ("", "0"):
-                return  # ready
+                return  # port is open — code-server is ready
         except Exception:
             pass
         time.sleep(1)
+    # Log the tail of code-server.log for debugging
+    try:
+        log = sandbox.commands.run("tail -20 /home/user/code-server.log 2>/dev/null", timeout=5)
+        logger.error(f"code-server.log tail: {log.stdout}")
+    except Exception:
+        pass
     raise RuntimeError("code-server did not bind to port 8080 within the timeout")
 
 
