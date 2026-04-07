@@ -60,11 +60,13 @@ function ProfileMenu({ user, onLogout, onClose, onOpenSettings, isDark = true, p
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{
             width: 34, height: 34, borderRadius: "50%",
-            background: profilePhoto ? `url(${profilePhoto}) center/cover` : "linear-gradient(135deg, #7dd3fc, #38bdf8, #0ea5e9)",
+            background: profilePhoto ? "transparent" : "linear-gradient(135deg, #7dd3fc, #38bdf8, #0ea5e9)",
             display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
             overflow: "hidden",
           }}>
-            {!profilePhoto && (
+            {profilePhoto ? (
+              <img src={profilePhoto} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "50%", display: "block" }} onError={e => { e.currentTarget.style.display = "none"; }} />
+            ) : (
               <span style={{ fontFamily: "'Outfit', sans-serif", fontWeight: 900, fontSize: "11px", color: "#fff", textTransform: "uppercase" }}>
                 {(user.name || user.email || "U").slice(0, 2)}
               </span>
@@ -715,7 +717,7 @@ export default function LandingPage({ onStart, tasks = [], onSelectTask, onClose
                   onClick={() => setShowProfileMenu(v => !v)}
                   style={{
                     width: 32, height: 32, borderRadius: "50%",
-                    background: profilePhoto ? `url(${profilePhoto}) center/cover` : "linear-gradient(135deg, #7dd3fc, #38bdf8, #0ea5e9)",
+                    background: profilePhoto ? "transparent" : "linear-gradient(135deg, #7dd3fc, #38bdf8, #0ea5e9)",
                     border: showProfileMenu ? "2px solid rgba(14,165,233,0.6)" : "2px solid transparent",
                     display: "flex", alignItems: "center", justifyContent: "center",
                     cursor: "pointer", transition: "border-color 0.15s",
@@ -724,7 +726,14 @@ export default function LandingPage({ onStart, tasks = [], onSelectTask, onClose
                     overflow: "hidden",
                   }}
                 >
-                  {!profilePhoto && (
+                  {profilePhoto ? (
+                    <img
+                      src={profilePhoto}
+                      alt={(user.name || user.email || "U").slice(0, 2)}
+                      style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "50%", display: "block" }}
+                      onError={e => { e.currentTarget.style.display = "none"; }}
+                    />
+                  ) : (
                     <span style={{ fontFamily: "'Outfit', sans-serif", fontWeight: 900, fontSize: "11px", color: "#fff", textTransform: "uppercase" }}>
                       {(user.name || user.email || "U").slice(0, 2)}
                     </span>

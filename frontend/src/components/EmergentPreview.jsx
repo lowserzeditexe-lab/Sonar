@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, RefreshCw, ExternalLink, Code2, Eye, Terminal, Copy, Check, ExternalLink as OpenIcon, ArrowRight } from "lucide-react";
+import { X, RefreshCw, ExternalLink, Code2, Eye, Terminal } from "lucide-react";
 import SkyWaterOverlay from "./SkyWaterOverlay";
 import PreviewFrame from "./PreviewFrame";
 
@@ -812,30 +812,25 @@ function CoderModal({ onClose, projectName, isDark = false, code = "" }) {
   );
 }
 
-export default function EmergentPreview({ projectType, isGenerating, previewReady, activeTab, onTabChange, code, terminalLogs, projectName, isDark = false, onClose, openCoderExternal, onCoderExternalClosed, sandboxUrl, isSandboxLoading }) {
+export default function EmergentPreview({ projectType, isGenerating, previewReady, activeTab, onTabChange, code, terminalLogs, projectName, isDark = false, onClose, openCoderExternal, onCoderExternalClosed, sandboxUrl, isSandboxLoading, onOpenVSCode }) {
   const [refreshKey, setRefreshKey] = useState(0);
-  const [showCoderModal, setShowCoderModal] = useState(false);
   const dk = isDark;
 
   // Determine if we have AI-generated code (not mock)
   const hasGeneratedCode = code && code.length > 50;
 
-  // Open coder modal from external trigger (TopBar Code button)
+  // Open VS Code modal from external trigger (TopBar Code tab)
   useEffect(() => {
     if (openCoderExternal) {
-      setShowCoderModal(true);
+      if (onOpenVSCode) onOpenVSCode();
+      if (onCoderExternalClosed) onCoderExternalClosed();
     }
-  }, [openCoderExternal]);
+  }, [openCoderExternal]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleCloseCoder = () => {
-    setShowCoderModal(false);
-    if (onCoderExternalClosed) onCoderExternalClosed();
-  };
-
-  // Open coder modal when "Code" tab is clicked
+  // "Code" tab click → open real VS Code environment modal
   const handleTabChange = (id) => {
     if (id === "code") {
-      setShowCoderModal(true);
+      if (onOpenVSCode) onOpenVSCode();
     } else {
       onTabChange(id);
     }
@@ -954,7 +949,7 @@ export default function EmergentPreview({ projectType, isGenerating, previewRead
         </div>
       </div>
 
-      {/* Body */}
+        {/* Body (no CoderModal here — CodebaseModal is handled in AppBuilder) */}
       <div className="flex-1 overflow-hidden relative">
         <AnimatePresence mode="wait">
           {isGenerating && !previewReady ? (
@@ -1028,12 +1023,7 @@ export default function EmergentPreview({ projectType, isGenerating, previewRead
           )}
         </AnimatePresence>
 
-        {/* Coder Modal */}
-        <AnimatePresence>
-          {showCoderModal && (
-            <CoderModal onClose={handleCloseCoder} projectName={projectName} isDark={isDark} code={code} />
-          )}
-        </AnimatePresence>
+        {/* Coder Modal is no longer rendered here — handled by CodebaseModal in AppBuilder */}
       </div>
     </div>
   );

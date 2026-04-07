@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Rocket, Share2, LayoutGrid, Zap, Eye, Code2, Terminal } from "lucide-react";
+import { Rocket, Share2, LayoutGrid, Zap, Eye, Code2 } from "lucide-react";
 
-export default function TopBar({ isGenerating, onDeploy, onShare, onHome, projectName, isDark = false, user, showPreview, onTogglePreview, onOpenCode, onOpenVSCode, activeTaskId }) {
+export default function TopBar({ isGenerating, onDeploy, onShare, onHome, projectName, isDark = false, user, showPreview, onTogglePreview, onOpenCode }) {
   const [deployed, setDeployed] = useState(false);
   const dk = isDark;
 
@@ -13,6 +13,8 @@ export default function TopBar({ isGenerating, onDeploy, onShare, onHome, projec
   };
 
   const initials = (user?.name || user?.email || "U").slice(0, 2).toUpperCase();
+  // Use avatar_url if available (from OAuth providers)
+  const avatarUrl = user?.avatar_url || null;
 
   const tabStyle = (active) => ({
     display: "flex", alignItems: "center", gap: 5,
@@ -172,39 +174,29 @@ export default function TopBar({ isGenerating, onDeploy, onShare, onHome, projec
           {deployed ? "Deployed!" : "Deploy"}
         </motion.button>
 
-        {/* VS Code environment button — only when a real project is active */}
-        {user && activeTaskId && !activeTaskId.startsWith("task-") && !activeTaskId.startsWith("demo-") && (
-          <motion.button
-            data-testid="topbar-vscode-btn"
-            onClick={onOpenVSCode}
-            whileHover={{ scale: 1.03 }}
-            whileTap={{ scale: 0.97 }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all"
-            style={{
-              background: "linear-gradient(135deg, rgba(0,120,200,0.15) 0%, rgba(0,90,160,0.12) 100%)",
-              border: "1px solid rgba(0,122,204,0.3)",
-              color: "#3b82f6",
-              cursor: "pointer",
-            }}
-          >
-            <Terminal style={{ width: 13, height: 13 }} />
-            Code
-          </motion.button>
-        )}
-
-        {/* User avatar */}
+        {/* User avatar — shows photo if available, otherwise initials */}
         {user && (
           <div
-            className="flex items-center justify-center flex-shrink-0 ml-1"
+            className="flex items-center justify-center flex-shrink-0 ml-1 overflow-hidden"
             style={{
               width: 30, height: 30, borderRadius: "50%",
-              background: "linear-gradient(135deg, #7dd3fc, #38bdf8, #0ea5e9)",
+              background: avatarUrl ? "transparent" : "linear-gradient(135deg, #7dd3fc, #38bdf8, #0ea5e9)",
               boxShadow: "0 2px 8px rgba(14,165,233,0.3)",
+              flexShrink: 0,
             }}
           >
-            <span style={{ fontFamily: "'Outfit', sans-serif", fontWeight: 800, fontSize: "10px", color: "#fff", textTransform: "uppercase" }}>
-              {initials}
-            </span>
+            {avatarUrl ? (
+              <img
+                src={avatarUrl}
+                alt={initials}
+                style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "50%" }}
+                onError={e => { e.currentTarget.style.display = "none"; e.currentTarget.parentElement.innerHTML = `<span style="font-family:'Outfit',sans-serif;font-weight:800;font-size:10px;color:#fff;text-transform:uppercase">${initials}</span>`; }}
+              />
+            ) : (
+              <span style={{ fontFamily: "'Outfit', sans-serif", fontWeight: 800, fontSize: "10px", color: "#fff", textTransform: "uppercase" }}>
+                {initials}
+              </span>
+            )}
           </div>
         )}
       </div>

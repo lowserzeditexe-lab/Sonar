@@ -540,8 +540,6 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
         showPreview={showPreviewPanel}
         onTogglePreview={() => setShowPreviewPanel(p => !p)}
         onOpenCode={() => { setShowPreviewPanel(true); setShowCoderFromTopBar(true); }}
-        onOpenVSCode={() => setShowCodebaseModal(true)}
-        activeTaskId={activeTaskId}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -592,6 +590,7 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
                 onCoderExternalClosed={() => setShowCoderFromTopBar(false)}
                 sandboxUrl={sandboxUrl}
                 isSandboxLoading={isSandboxLoading}
+                onOpenVSCode={() => setShowCodebaseModal(true)}
               />
             </motion.div>
           )}
