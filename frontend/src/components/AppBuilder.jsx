@@ -8,7 +8,7 @@ import ShareModal from "./ShareModal";
 import DeployPanel from "./DeployPanel";
 import CodebaseModal from "./CodebaseModal";
 import { AGENT_STEPS, MOCK_LOGS } from "../data/mockData";
-import { createProject, updateProject, deleteProject, projectToTask, generateCode, chatWithCode, deploySandbox, killSandbox, attachCodebaseToProject, getProvisionStatus } from "../api/projects";
+import { createProject, updateProject, deleteProject, projectToTask, generateCode, chatWithCode, deploySandbox, killSandbox, attachCodebaseToProject, getProvisionStatus, syncCodeToWorkspace } from "../api/projects";
 
 // Agent metadata with mode-specific logs
 const AGENT_META_S1 = {
@@ -325,7 +325,7 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
 
     setIsGenerating(false);
 
-    // Deploy to E2B sandbox for live preview URL
+    // Deploy to E2B sandbox for live preview URL (iframe)
     if (generatedCode) {
       deployCodeToSandbox(generatedCode);
     }
@@ -341,6 +341,8 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
             { role: "assistant", content: doneMsg },
           ],
         });
+        // Push generated code into the agent workspace (fire-and-forget)
+        syncCodeToWorkspace(taskId);
       } catch (err) {
         console.error("Failed to update project:", err);
       }
@@ -401,9 +403,11 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
         setIsGenerating(false);
         addMsg({ role: "assistant", content: "Done! I've updated the code with your changes." });
 
-        // Save to project
+        // Save to project + push updated code into agent workspace
         if (user && token && projectId) {
-          updateProject(projectId, { code: fullCode }).catch(console.error);
+          updateProject(projectId, { code: fullCode })
+            .then(() => syncCodeToWorkspace(projectId))
+            .catch(console.error);
         }
       },
       // onError

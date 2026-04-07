@@ -81,6 +81,21 @@ export async function killSandbox(sandboxId) {
   return res.data;
 }
 
+/**
+ * Sync latest generated code to the agent's VS Code workspace.
+ * Called after each generation/chat. Fire-and-forget (non-blocking).
+ */
+export async function syncCodeToWorkspace(projectId) {
+  try {
+    const res = await api.post(`/api/projects/${projectId}/codebase/sync-code`);
+    return res.data;
+  } catch (e) {
+    // Non-blocking — silently ignore errors
+    console.warn("Workspace sync skipped:", e?.response?.data?.detail || e.message);
+    return null;
+  }
+}
+
 // ── E2B VS Code Pre-Provisioning (for CostPreviewModal) ──
 
 /**

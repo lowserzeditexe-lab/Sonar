@@ -1295,6 +1295,56 @@ async def delete_project_codebase(
     return {"deleted": True, "project_id": project_id}
 
 
+def _write_code_to_sandbox_sync(sandbox_id: str, code: str) -> None:
+    """
+    Connect to an existing sandbox and write the generated code
+    to the agent workspace. Non-blocking — errors are logged only.
+    """
+    from e2b import Sandbox
+    try:
+        sandbox = Sandbox.connect(sandbox_id)
+        sandbox.commands.run("mkdir -p /home/user/workspace", timeout=10)
+        if code and len(code) > 10:
+            sandbox.files.write("/home/user/workspace/App.jsx", code)
+        logger.info(f"Synced code to sandbox {sandbox_id}")
+    except Exception as e:
+        logger.warning(f"Could not sync code to sandbox {sandbox_id}: {e}")
+
+
+@api_router.post("/projects/{project_id}/codebase/sync-code")
+async def sync_code_to_codebase(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Push the latest generated code from the project into the agent workspace.
+    Called automatically after each generation or chat update.
+    Fire-and-forget — never blocks the generation flow.
+    """
+    project_doc = await db.projects.find_one(
+        {"id": project_id, "user_id": current_user.id},
+        {"_id": 0},
+    )
+    if not project_doc:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    sandbox_id = project_doc.get("vscode_sandbox_id")
+    code = project_doc.get("code", "")
+
+    if not sandbox_id:
+        return {"synced": False, "reason": "No workspace attached yet"}
+
+    if not code or len(code) < 10:
+        return {"synced": False, "reason": "No code to sync"}
+
+    # Fire-and-forget — don't await, don't block generation
+    asyncio.get_event_loop().run_in_executor(
+        None, _write_code_to_sandbox_sync, sandbox_id, code
+    )
+
+    return {"synced": True, "sandbox_id": sandbox_id}
+
+
 # ──────────────────────────────────────────────────────────────
 # Pre-provisioning: VS Code sandbox created BEFORE project exists
 # Used in CostPreviewModal to provision in parallel with generation
