@@ -422,7 +422,13 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
     abortRef.current = controller;
   };
 
-  const handleDeploy = () => setShowDeploy(true);
+  const handleDeploy = () => {
+    // If sandbox not yet deployed, trigger it now (Deploy button click)
+    if (!sandboxUrl && previewReady && currentCode) {
+      deployCodeToSandbox(currentCode);
+    }
+    setShowDeploy(true);
+  };
 
 
   const handleReset = () => {
@@ -544,6 +550,8 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
         showPreview={showPreviewPanel}
         onTogglePreview={() => setShowPreviewPanel(p => !p)}
         onOpenCode={() => { setShowPreviewPanel(true); setShowCoderFromTopBar(true); }}
+        previewReady={previewReady}
+        liveUrl={sandboxUrl}
       />
 
       <div className="flex flex-1 overflow-hidden">

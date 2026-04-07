@@ -870,50 +870,50 @@ export default function EmergentPreview({ projectType, isGenerating, previewRead
             className="p-1.5 rounded transition-colors" style={{ color: dk ? "rgba(100,116,139,0.5)" : "rgba(40,70,130,0.4)" }}>
             <RefreshCw style={{ width: 12, height: 12 }} />
           </button>
-          {/* Live preview button — always the primary external action */}
-          {isSandboxLoading ? (
-            // Sandbox creating — pulsing "Live" pill
-            <div
-              title="Creating live sandbox…"
-              className="flex items-center gap-1.5 px-2 py-1 rounded-lg"
-              style={{
-                background: dk ? "rgba(6,182,212,0.08)" : "rgba(6,182,212,0.06)",
-                border: `1px solid ${dk ? "rgba(6,182,212,0.2)" : "rgba(6,182,212,0.2)"}`,
-              }}
-            >
-              <motion.div
-                animate={{ rotate: 360 }}
-                transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                style={{ width: 9, height: 9, borderRadius: "50%", border: "1.5px solid rgba(6,182,212,0.25)", borderTopColor: "#06b6d4", flexShrink: 0 }}
-              />
-              <span style={{ fontSize: 10, color: "#06b6d4", fontFamily: "'DM Sans', sans-serif", fontWeight: 600, whiteSpace: "nowrap" }}>
-                Live…
-              </span>
-            </div>
-          ) : sandboxUrl ? (
-            // Sandbox ready — green Live button
-            <a
-              href={sandboxUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              data-testid="open-external"
-              title={sandboxUrl}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg transition-all"
-              style={{
-                background: dk ? "rgba(16,185,129,0.1)" : "rgba(16,185,129,0.1)",
-                border: `1px solid ${dk ? "rgba(16,185,129,0.28)" : "rgba(16,185,129,0.3)"}`,
-                textDecoration: "none",
-              }}
-              onMouseEnter={e => { e.currentTarget.style.background = "rgba(16,185,129,0.2)"; }}
-              onMouseLeave={e => { e.currentTarget.style.background = dk ? "rgba(16,185,129,0.1)" : "rgba(16,185,129,0.1)"; }}
-            >
-              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", flexShrink: 0, boxShadow: "0 0 6px rgba(16,185,129,0.8)" }} />
-              <span style={{ fontSize: 10, color: "#10b981", fontFamily: "'DM Sans', sans-serif", fontWeight: 700, whiteSpace: "nowrap", letterSpacing: "0.02em" }}>
-                Live
-              </span>
-              <ExternalLink style={{ width: 9, height: 9, color: "#10b981" }} />
-            </a>
-          ) : null /* no static ExternalLink when no sandbox */ }
+          {/* Live button — only visible once app generation is complete */}
+          {previewReady && (
+            isSandboxLoading ? (
+              <div
+                title="Creating live sandbox…"
+                className="flex items-center gap-1.5 px-2 py-1 rounded-lg"
+                style={{
+                  background: dk ? "rgba(6,182,212,0.08)" : "rgba(6,182,212,0.06)",
+                  border: `1px solid ${dk ? "rgba(6,182,212,0.2)" : "rgba(6,182,212,0.2)"}`,
+                }}
+              >
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                  style={{ width: 9, height: 9, borderRadius: "50%", border: "1.5px solid rgba(6,182,212,0.25)", borderTopColor: "#06b6d4", flexShrink: 0 }}
+                />
+                <span style={{ fontSize: 10, color: "#06b6d4", fontFamily: "'DM Sans', sans-serif", fontWeight: 600, whiteSpace: "nowrap" }}>
+                  Live…
+                </span>
+              </div>
+            ) : sandboxUrl ? (
+              <a
+                href={sandboxUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="open-external"
+                title={sandboxUrl}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg transition-all"
+                style={{
+                  background: dk ? "rgba(16,185,129,0.1)" : "rgba(16,185,129,0.1)",
+                  border: `1px solid ${dk ? "rgba(16,185,129,0.28)" : "rgba(16,185,129,0.3)"}`,
+                  textDecoration: "none",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = "rgba(16,185,129,0.2)"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = dk ? "rgba(16,185,129,0.1)" : "rgba(16,185,129,0.1)"; }}
+              >
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", flexShrink: 0, boxShadow: "0 0 6px rgba(16,185,129,0.8)" }} />
+                <span style={{ fontSize: 10, color: "#10b981", fontFamily: "'DM Sans', sans-serif", fontWeight: 700, whiteSpace: "nowrap", letterSpacing: "0.02em" }}>
+                  Live
+                </span>
+                <ExternalLink style={{ width: 9, height: 9, color: "#10b981" }} />
+              </a>
+            ) : null
+          )}
           {onClose && (
             <button
               data-testid="close-preview"

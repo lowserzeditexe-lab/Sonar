@@ -1,20 +1,27 @@
-import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Rocket, Share2, LayoutGrid, Zap, Eye, Code2 } from "lucide-react";
+import { Rocket, Share2, LayoutGrid, Zap, Eye, Code2, ExternalLink } from "lucide-react";
 
-export default function TopBar({ isGenerating, onDeploy, onShare, onHome, projectName, isDark = false, user, showPreview, onTogglePreview, onOpenCode }) {
-  const [deployed, setDeployed] = useState(false);
+export default function TopBar({
+  isGenerating,
+  onDeploy,
+  onShare,
+  onHome,
+  projectName,
+  isDark = false,
+  user,
+  showPreview,
+  onTogglePreview,
+  onOpenCode,
+  // App state for Live/Share/Deploy
+  previewReady = false,
+  liveUrl = null,
+}) {
   const dk = isDark;
-
-  const handleDeploy = () => {
-    setDeployed(true);
-    onDeploy();
-    setTimeout(() => setDeployed(false), 3000);
-  };
-
   const initials = (user?.name || user?.email || "U").slice(0, 2).toUpperCase();
-  // Use avatar_url if available (from OAuth providers)
   const avatarUrl = user?.avatar_url || null;
+
+  // App is considered "live" when generation is done and E2B sandbox URL is ready
+  const isLive = previewReady && !!liveUrl && !isGenerating;
 
   const tabStyle = (active) => ({
     display: "flex", alignItems: "center", gap: 5,
@@ -62,33 +69,17 @@ export default function TopBar({ isGenerating, onDeploy, onShare, onHome, projec
         <span style={{ fontSize: "13px", fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 600, letterSpacing: "-0.01em" }}>Home</span>
       </button>
 
-      {/* Center — absolute positioned for true centering */}
+      {/* Center — project name */}
       {projectName && projectName !== "untitled-app" && (
         <div
           className="flex items-center justify-center gap-2"
-          style={{
-            position: "absolute",
-            left: "50%",
-            top: "50%",
-            transform: "translate(-50%, -50%)",
-            pointerEvents: "none",
-          }}
+          style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", pointerEvents: "none" }}
         >
-          <span style={{
-            fontSize: "13.5px",
-            color: dk ? "rgba(200,215,235,0.85)" : "#1e3264",
-            fontFamily: "'Plus Jakarta Sans', sans-serif",
-            fontWeight: 700,
-            letterSpacing: "-0.02em",
-          }}>
+          <span style={{ fontSize: "13.5px", color: dk ? "rgba(200,215,235,0.85)" : "#1e3264", fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700, letterSpacing: "-0.02em" }}>
             {projectName}
           </span>
           {isGenerating && (
-            <motion.div
-              animate={{ opacity: [1, 0.3, 1] }}
-              transition={{ duration: 1.1, repeat: Infinity }}
-              className="flex items-center gap-1"
-            >
+            <motion.div animate={{ opacity: [1, 0.3, 1] }} transition={{ duration: 1.1, repeat: Infinity }} className="flex items-center gap-1">
               <Zap style={{ width: 11, height: 11, color: "#4ade80" }} />
               <span style={{ fontSize: "11px", color: "rgba(74,222,128,0.7)", fontFamily: "'DM Sans', sans-serif", fontWeight: 500, letterSpacing: "0.01em" }}>
                 generating
@@ -101,10 +92,12 @@ export default function TopBar({ isGenerating, onDeploy, onShare, onHome, projec
       {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Right — Preview/Code (only when panel visible) + Share + Deploy + Avatar */}
-      <div className="flex items-center gap-2 px-3 flex-shrink-0 relative z-10" style={{ borderLeft: dk ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(80,140,220,0.12)" }}>
-
-        {/* Preview & Code tabs — only visible when side panel is closed */}
+      {/* Right section */}
+      <div
+        className="flex items-center gap-2 px-3 flex-shrink-0 relative z-10"
+        style={{ borderLeft: dk ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(80,140,220,0.12)" }}
+      >
+        {/* Preview & Code tabs — when side panel is hidden */}
         <AnimatePresence>
           {!showPreview && (
             <motion.div
@@ -115,11 +108,7 @@ export default function TopBar({ isGenerating, onDeploy, onShare, onHome, projec
               className="flex items-center gap-1 overflow-hidden"
               style={{ marginRight: 6 }}
             >
-              <button
-                data-testid="topbar-preview-btn"
-                onClick={onTogglePreview}
-                style={tabStyle(true)}
-              >
+              <button data-testid="topbar-preview-btn" onClick={onTogglePreview} style={tabStyle(true)}>
                 <Eye style={{ width: 12, height: 12 }} />
                 Preview
               </button>
@@ -137,44 +126,86 @@ export default function TopBar({ isGenerating, onDeploy, onShare, onHome, projec
           )}
         </AnimatePresence>
 
+        {/* Share — enabled only when app is ready */}
         <motion.button
           data-testid="share-button"
-          onClick={onShare}
-          whileHover={{ scale: 1.03 }}
-          whileTap={{ scale: 0.97 }}
+          onClick={previewReady ? onShare : undefined}
+          whileHover={previewReady ? { scale: 1.03 } : {}}
+          whileTap={previewReady ? { scale: 0.97 } : {}}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all"
           style={{
             background: dk ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.6)",
             border: dk ? "1px solid rgba(255,255,255,0.08)" : "1px solid rgba(80,140,220,0.2)",
-            color: dk ? "rgba(180,195,215,0.85)" : "rgba(30,60,120,0.7)",
+            color: previewReady
+              ? (dk ? "rgba(180,195,215,0.85)" : "rgba(30,60,120,0.7)")
+              : (dk ? "rgba(100,116,139,0.3)" : "rgba(30,60,120,0.25)"),
+            cursor: previewReady ? "pointer" : "not-allowed",
+            opacity: previewReady ? 1 : 0.5,
           }}
         >
-          <Share2 style={{ width: 13, height: 13 }} /> Share
+          <Share2 style={{ width: 13, height: 13 }} />
+          Share
         </motion.button>
 
-        <motion.button
-          data-testid="deploy-button"
-          onClick={handleDeploy}
-          disabled={isGenerating}
-          whileHover={!isGenerating ? { scale: 1.03 } : {}}
-          whileTap={!isGenerating ? { scale: 0.97 } : {}}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all"
-          style={{
-            background: deployed
-              ? "linear-gradient(135deg,#10b981,#059669)"
-              : isGenerating
-              ? (dk ? "rgba(30,41,59,0.5)" : "rgba(0,0,0,0.06)")
-              : "linear-gradient(135deg,#06b6d4,#0ea5e9)",
-            color: isGenerating ? (dk ? "#475569" : "#94a3b8") : "#000",
-            boxShadow: !isGenerating && !deployed ? "0 0 16px rgba(6,182,212,0.3)" : "none",
-            cursor: isGenerating ? "not-allowed" : "pointer",
-          }}
-        >
-          <Rocket style={{ width: 13, height: 13 }} />
-          {deployed ? "Deployed!" : "Deploy"}
-        </motion.button>
+        {/* Deploy / Live button */}
+        <AnimatePresence mode="wait">
+          {isLive ? (
+            // App is live — show green Live button that opens the live URL
+            <motion.a
+              key="live"
+              href={liveUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="deploy-button"
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              transition={{ duration: 0.2 }}
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.97 }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold"
+              style={{
+                background: "linear-gradient(135deg, #10b981, #059669)",
+                color: "#fff",
+                boxShadow: "0 0 16px rgba(16,185,129,0.35)",
+                textDecoration: "none",
+                cursor: "pointer",
+              }}
+              onClick={e => { e.preventDefault(); onDeploy(); }}
+            >
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "rgba(255,255,255,0.8)", boxShadow: "0 0 5px #fff" }} />
+              Live
+              <ExternalLink style={{ width: 11, height: 11, opacity: 0.8 }} />
+            </motion.a>
+          ) : (
+            // Not live yet — Deploy button
+            <motion.button
+              key="deploy"
+              data-testid="deploy-button"
+              onClick={previewReady ? onDeploy : undefined}
+              disabled={isGenerating}
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              whileHover={previewReady && !isGenerating ? { scale: 1.03 } : {}}
+              whileTap={previewReady && !isGenerating ? { scale: 0.97 } : {}}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all"
+              style={{
+                background: isGenerating || !previewReady
+                  ? (dk ? "rgba(30,41,59,0.5)" : "rgba(0,0,0,0.06)")
+                  : "linear-gradient(135deg,#06b6d4,#0ea5e9)",
+                color: isGenerating || !previewReady ? (dk ? "#475569" : "#94a3b8") : "#000",
+                boxShadow: !isGenerating && previewReady ? "0 0 16px rgba(6,182,212,0.3)" : "none",
+                cursor: isGenerating || !previewReady ? "not-allowed" : "pointer",
+              }}
+            >
+              <Rocket style={{ width: 13, height: 13 }} />
+              Deploy
+            </motion.button>
+          )}
+        </AnimatePresence>
 
-        {/* User avatar — shows photo if available, otherwise initials */}
+        {/* User avatar */}
         {user && (
           <div
             className="flex items-center justify-center flex-shrink-0 ml-1 overflow-hidden"
@@ -190,7 +221,7 @@ export default function TopBar({ isGenerating, onDeploy, onShare, onHome, projec
                 src={avatarUrl}
                 alt={initials}
                 style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "50%" }}
-                onError={e => { e.currentTarget.style.display = "none"; e.currentTarget.parentElement.innerHTML = `<span style="font-family:'Outfit',sans-serif;font-weight:800;font-size:10px;color:#fff;text-transform:uppercase">${initials}</span>`; }}
+                onError={e => { e.currentTarget.style.display = "none"; }}
               />
             ) : (
               <span style={{ fontFamily: "'Outfit', sans-serif", fontWeight: 800, fontSize: "10px", color: "#fff", textTransform: "uppercase" }}>

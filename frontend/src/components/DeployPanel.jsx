@@ -19,10 +19,10 @@ export default function DeployPanel({ isOpen, onClose, projectName, isDark = fal
   const [doneSteps, setDoneSteps] = useState([]);
   const [copied, setCopied] = useState(false);
 
-  // Live URL to use — real E2B sandbox URL if available
-  const deployedUrl = liveUrl || "https://my-app.sonar.sh";
+  // Live URL — real E2B sandbox URL if available
+  const deployedUrl = liveUrl || null;
 
-  // If we already have a live URL, go straight to "done" when opening
+  // When panel opens: if URL already ready → show done; otherwise idle
   useEffect(() => {
     if (isOpen) {
       if (liveUrl) {
@@ -36,7 +36,16 @@ export default function DeployPanel({ isOpen, onClose, projectName, isDark = fal
       }
       setCopied(false);
     }
-  }, [isOpen, liveUrl]);
+  }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // If liveUrl arrives while "deploying" → jump to done
+  useEffect(() => {
+    if (liveUrl && phase === "deploying") {
+      setStepIndex(-1);
+      setDoneSteps(DEPLOY_STEPS.map((_, i) => i));
+      setPhase("done");
+    }
+  }, [liveUrl, phase]);
 
   // close on Escape
   useEffect(() => {
@@ -46,6 +55,7 @@ export default function DeployPanel({ isOpen, onClose, projectName, isDark = fal
   }, [isOpen, onClose]);
 
   const handleDeploy = () => {
+    // Simulate deployment steps while actual E2B sandbox is being created
     setPhase("deploying");
     setStepIndex(-1);
     setDoneSteps([]);
@@ -56,6 +66,7 @@ export default function DeployPanel({ isOpen, onClose, projectName, isDark = fal
       total += step.duration;
       setTimeout(() => setDoneSteps(prev => [...prev, i]), total + 200);
     });
+    // Only set done via timeout if liveUrl hasn't arrived by then
     setTimeout(() => {
       setStepIndex(-1);
       setPhase("done");
@@ -63,6 +74,7 @@ export default function DeployPanel({ isOpen, onClose, projectName, isDark = fal
   };
 
   const handleCopy = () => {
+    if (!deployedUrl) return;
     navigator.clipboard.writeText(deployedUrl).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 2200);
