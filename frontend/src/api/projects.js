@@ -81,6 +81,36 @@ export async function killSandbox(sandboxId) {
   return res.data;
 }
 
+// ── E2B VS Code Pre-Provisioning (for CostPreviewModal) ──
+
+/**
+ * Start pre-provisioning a VS Code sandbox (before project exists).
+ * Returns { provision_id, status: "starting" }
+ */
+export async function provisionVSCode() {
+  const res = await api.post("/api/sandbox/vscode/provision");
+  return res.data;
+}
+
+/**
+ * Poll the status of a VS Code pre-provisioning request.
+ * Returns { provision_id, status: "starting"|"sandbox_created"|"installing"|"configuring"|"ready"|"error", error? }
+ */
+export async function getProvisionStatus(provisionId) {
+  const res = await api.get(`/api/sandbox/vscode/provision/${provisionId}/status`);
+  return res.data;
+}
+
+/**
+ * Attach a pre-provisioned VS Code sandbox to a project.
+ */
+export async function attachCodebaseToProject(projectId, provisionId) {
+  const res = await api.post(`/api/projects/${projectId}/codebase/attach`, {
+    provision_id: provisionId,
+  });
+  return res.data;
+}
+
 // ── E2B VS Code Codebase per project ──
 
 /**

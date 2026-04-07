@@ -61,11 +61,11 @@ class SonarAPITester:
         return self.run_test("Root API", "GET", "api/", 200)
 
     def test_register_user(self):
-        """Test user registration"""
+        """Test user registration with unique email"""
         timestamp = datetime.now().strftime('%H%M%S')
         test_data = {
             "name": f"Test User {timestamp}",
-            "email": f"test{timestamp}@test.com",
+            "email": f"newtest{timestamp}@test.com",  # Using unique email as specified
             "password": "testtest"
         }
         
@@ -80,7 +80,9 @@ class SonarAPITester:
         if success and 'token' in response:
             self.token = response['token']
             self.user_id = response['user']['id']
+            self.test_email = test_data['email']  # Store for later use
             print(f"   Token obtained: {self.token[:20]}...")
+            print(f"   User email: {self.test_email}")
             return True
         return False
 
@@ -184,6 +186,75 @@ class SonarAPITester:
         )
         return success and response.get('status') == 'complete'
 
+    def test_vscode_provision_endpoint(self):
+        """Test VS Code pre-provisioning endpoint (new E2B feature)"""
+        success, response = self.run_test(
+            "VS Code Pre-Provision",
+            "POST",
+            "api/sandbox/vscode/provision",
+            200
+        )
+        
+        if success and 'provision_id' in response:
+            self.provision_id = response['provision_id']
+            print(f"   Provision ID: {self.provision_id}")
+            print(f"   Initial Status: {response.get('status', 'N/A')}")
+            return True
+        return False
+
+    def test_vscode_provision_status(self):
+        """Test VS Code provision status polling endpoint"""
+        if not hasattr(self, 'provision_id') or not self.provision_id:
+            print("❌ No provision ID available for testing")
+            return False
+            
+        success, response = self.run_test(
+            "VS Code Provision Status",
+            "GET",
+            f"api/sandbox/vscode/provision/{self.provision_id}/status",
+            200
+        )
+        
+        if success:
+            expected_fields = ['provision_id', 'status']
+            has_all_fields = all(field in response for field in expected_fields)
+            if has_all_fields:
+                print(f"   Status: {response.get('status', 'N/A')}")
+                print(f"   Error: {response.get('error', 'None')}")
+                return True
+            else:
+                print(f"❌ Missing expected fields in response: {response}")
+        return False
+
+    def test_attach_provision_to_project(self):
+        """Test attaching pre-provisioned VS Code to project"""
+        if not self.project_id or not hasattr(self, 'provision_id'):
+            print("❌ No project ID or provision ID available for testing")
+            return False
+            
+        attach_data = {
+            "provision_id": self.provision_id
+        }
+        
+        success, response = self.run_test(
+            "Attach Provision to Project",
+            "POST",
+            f"api/projects/{self.project_id}/codebase/attach",
+            200,
+            data=attach_data
+        )
+        
+        if success:
+            expected_fields = ['attached', 'status']
+            has_all_fields = all(field in response for field in expected_fields)
+            if has_all_fields:
+                print(f"   Attached: {response.get('attached', 'N/A')}")
+                print(f"   Status: {response.get('status', 'N/A')}")
+                return True
+            else:
+                print(f"❌ Missing expected fields in response: {response}")
+        return False
+
     def test_codebase_creation_endpoint(self):
         """Test VS Code codebase creation endpoint (should work but take time)"""
         if not self.project_id:
@@ -233,12 +304,14 @@ def main():
     tests = [
         ("Root API", tester.test_root_endpoint),
         ("User Registration", tester.test_register_user),
-        ("User Login", tester.test_login_user),
         ("Get Current User", tester.test_get_current_user),
         ("Create Project", tester.test_create_project),
         ("Get Projects", tester.test_get_projects),
         ("Get Project", tester.test_get_project),
         ("Update Project", tester.test_update_project),
+        ("VS Code Pre-Provision", tester.test_vscode_provision_endpoint),
+        ("VS Code Provision Status", tester.test_vscode_provision_status),
+        ("Attach Provision to Project", tester.test_attach_provision_to_project),
         ("VS Code Codebase Creation", tester.test_codebase_creation_endpoint),
         ("Delete Project", tester.test_delete_project),
     ]

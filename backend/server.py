@@ -1295,6 +1295,208 @@ async def delete_project_codebase(
     return {"deleted": True, "project_id": project_id}
 
 
+# ──────────────────────────────────────────────────────────────
+# Pre-provisioning: VS Code sandbox created BEFORE project exists
+# Used in CostPreviewModal to provision in parallel with generation
+# ──────────────────────────────────────────────────────────────
+
+# In-memory store for pre-provisioned sandboxes
+# { provision_id: { status, sandbox_id, vscode_url, vscode_password, error } }
+_vscode_provisions: dict = {}
+
+
+def _provision_vscode_background(provision_id: str) -> None:
+    """
+    Full E2B provisioning run synchronously in a thread.
+    Updates _vscode_provisions dict with progress.
+    Stages: sandbox_created → installing → configuring → ready
+    """
+    from e2b import Sandbox
+
+    api_key = os.environ.get("E2B_API_KEY", "")
+    password = _generate_vscode_password()
+    store = _vscode_provisions[provision_id]
+
+    try:
+        # Stage 1: Create sandbox (fast ~0.5s)
+        sandbox = Sandbox.create(api_key=api_key, timeout=3600)
+        sandbox_id = sandbox.sandbox_id
+        store["sandbox_id"] = sandbox_id
+        store["status"] = "sandbox_created"   # → step 2 done in frontend
+
+        # Stage 2: Install code-server (~30s)
+        store["status"] = "installing"         # → step 3 active
+        sandbox.commands.run(
+            "curl -fsSL https://code-server.dev/install.sh | sh -s -- --method=standalone 2>&1 | tail -3",
+            timeout=180,
+        )
+
+        # Stage 3: Configure
+        store["status"] = "configuring"        # → step 3 done, step 4 active
+        sandbox.commands.run("mkdir -p /home/user/.config/code-server", timeout=15)
+        config_yaml = f"""bind-addr: 0.0.0.0:8080
+auth: password
+password: {password}
+cert: false
+"""
+        sandbox.files.write("/home/user/.config/code-server/config.yaml", config_yaml)
+        sandbox.commands.run("mkdir -p /home/user/workspace", timeout=15)
+        sandbox.files.write(
+            "/home/user/workspace/App.jsx",
+            "// Your generated app will appear here once generation completes.\n"
+        )
+
+        # Stage 4: Start code-server
+        sandbox.commands.run(
+            "HOME=/home/user nohup /home/user/.local/bin/code-server "
+            "--bind-addr 0.0.0.0:8080 /home/user/workspace > /home/user/code-server.log 2>&1 &",
+            background=True,
+        )
+        time.sleep(6)  # Let code-server start
+
+        # Get public URL
+        host = sandbox.get_host(8080)
+        vscode_url = f"https://{host}"
+
+        store["vscode_url"] = vscode_url
+        store["vscode_password"] = password
+        store["status"] = "ready"              # → all 4 steps done
+
+    except Exception as e:
+        logger.error(f"VS Code pre-provisioning failed [{provision_id}]: {e}")
+        store["status"] = "error"
+        store["error"] = str(e)
+        # Attempt cleanup
+        if store.get("sandbox_id"):
+            try:
+                from e2b import Sandbox
+                sbx = Sandbox.connect(store["sandbox_id"])
+                sbx.kill()
+            except Exception:
+                pass
+
+
+@api_router.post("/sandbox/vscode/provision")
+async def provision_vscode_sandbox(req: Request):
+    """
+    Pre-provision a VS Code sandbox before the project is created.
+    Returns provision_id immediately; actual creation runs in background.
+    Requires authentication.
+    """
+    # Optional auth — only provision for authenticated users
+    auth_header = req.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    e2b_key = os.environ.get("E2B_API_KEY", "")
+    if not e2b_key:
+        raise HTTPException(status_code=500, detail="E2B_API_KEY not configured")
+
+    provision_id = str(uuid.uuid4())
+    _vscode_provisions[provision_id] = {
+        "status": "starting",   # immediately set to 'starting' for step 1
+        "sandbox_id": None,
+        "vscode_url": None,
+        "vscode_password": None,
+        "error": None,
+    }
+
+    # Start in background thread (non-blocking)
+    asyncio.get_event_loop().run_in_executor(
+        None, _provision_vscode_background, provision_id
+    )
+
+    return {"provision_id": provision_id, "status": "starting"}
+
+
+@api_router.get("/sandbox/vscode/provision/{provision_id}/status")
+async def get_provision_status(provision_id: str, req: Request):
+    """Poll the status of a VS Code pre-provisioning request."""
+    # Optional auth check
+    auth_header = req.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    store = _vscode_provisions.get(provision_id)
+    if not store:
+        raise HTTPException(status_code=404, detail="Provision not found")
+
+    return {
+        "provision_id": provision_id,
+        "status": store["status"],
+        "error": store.get("error"),
+    }
+
+
+class AttachCodebaseRequest(BaseModel):
+    provision_id: str
+
+
+@api_router.post("/projects/{project_id}/codebase/attach")
+async def attach_provision_to_project(
+    project_id: str,
+    body: AttachCodebaseRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Attach a pre-provisioned VS Code sandbox to a project.
+    Called after project creation + sandbox is ready.
+    """
+    project_doc = await db.projects.find_one(
+        {"id": project_id, "user_id": current_user.id},
+        {"_id": 0},
+    )
+    if not project_doc:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    provision_id = body.provision_id
+    store = _vscode_provisions.get(provision_id)
+    if not store:
+        raise HTTPException(status_code=404, detail="Provision not found")
+
+    if store["status"] == "error":
+        raise HTTPException(status_code=500, detail=f"Provision failed: {store.get('error', 'unknown')}")
+
+    if store["status"] != "ready":
+        # Still provisioning — store partially (will be updated later)
+        await db.projects.update_one(
+            {"id": project_id, "user_id": current_user.id},
+            {"$set": {
+                "vscode_sandbox_id": store.get("sandbox_id"),
+                "vscode_url": store.get("vscode_url"),
+                "vscode_password": store.get("vscode_password"),
+                "vscode_provision_id": provision_id,
+                "vscode_created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }},
+        )
+        return {"attached": True, "status": store["status"], "provision_id": provision_id}
+
+    # Ready — attach all credentials
+    await db.projects.update_one(
+        {"id": project_id, "user_id": current_user.id},
+        {"$set": {
+            "vscode_sandbox_id": store["sandbox_id"],
+            "vscode_url": store["vscode_url"],
+            "vscode_password": store["vscode_password"],
+            "vscode_provision_id": provision_id,
+            "vscode_created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+
+    # Remove from in-memory store
+    _vscode_provisions.pop(provision_id, None)
+
+    return {
+        "attached": True,
+        "status": "ready",
+        "vscode_url": store["vscode_url"],
+        "vscode_password": store["vscode_password"],
+        "sandbox_id": store["sandbox_id"],
+    }
+
+
 def clean_code_fences(text: str) -> str:
     """Remove markdown code fences from LLM output."""
     code = text.strip()

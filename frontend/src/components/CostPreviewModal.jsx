@@ -1,19 +1,58 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, ArrowRight, Check } from "lucide-react";
 import { MODELS } from "../data/mockData";
 import { ChatGPTIcon, ClaudeIcon, GeminiIcon } from "./AIIcons";
+import { provisionVSCode, getProvisionStatus } from "../api/projects";
 
-const LOADING_STEPS = [
-  { label: "Loading cloud environment", duration: 800 },
-  { label: "Allocating resources",      duration: 700 },
-  { label: "Configuring environment",   duration: 900 },
-  { label: "Starting agents",           duration: 600 },
+// Steps that map to REAL E2B provisioning phases
+// status field matches the backend's _vscode_provisions status values
+const PROVISION_STEPS = [
+  {
+    label: "Loading cloud environment",
+    // Completes immediately when provision starts (API called successfully)
+    activeOn: "starting",
+    doneOn: ["sandbox_created", "installing", "configuring", "ready"],
+  },
+  {
+    label: "Allocating resources",
+    // Completes when E2B sandbox object is created (~1-2s)
+    activeOn: "sandbox_created",
+    doneOn: ["installing", "configuring", "ready"],
+  },
+  {
+    label: "Configuring environment",
+    // Completes when code-server is installed and configured (~30-50s)
+    activeOn: ["installing", "configuring"],
+    doneOn: ["ready"],
+  },
+  {
+    label: "Starting agents",
+    // Completes when code-server is running and URL is available
+    activeOn: null, // only shown as done when status = ready
+    doneOn: ["ready"],
+  },
 ];
 
+function getStepState(step, currentStatus) {
+  // Returns "done" | "active" | "pending"
+  if (!currentStatus || currentStatus === "idle") return "pending";
+
+  if (Array.isArray(step.doneOn)) {
+    if (step.doneOn.includes(currentStatus)) return "done";
+  }
+
+  if (step.activeOn) {
+    const active = Array.isArray(step.activeOn) ? step.activeOn : [step.activeOn];
+    if (active.includes(currentStatus)) return "active";
+  }
+
+  return "pending";
+}
+
 function ModelBigIcon({ provider, size = 72 }) {
-  if (provider === "openai")     return <span style={{ color: "#fff", opacity: 0.92, display: "flex" }}><ChatGPTIcon size={size} /></span>;
-  if (provider === "anthropic")  return <span style={{ color: "#D97757", display: "flex" }}><ClaudeIcon size={size} /></span>;
+  if (provider === "openai") return <span style={{ color: "#fff", opacity: 0.92, display: "flex" }}><ChatGPTIcon size={size} /></span>;
+  if (provider === "anthropic") return <span style={{ color: "#D97757", display: "flex" }}><ClaudeIcon size={size} /></span>;
   return <GeminiIcon size={size} />;
 }
 
@@ -35,28 +74,115 @@ function formatFileSize(bytes) {
   return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
 
-export default function CostPreviewModal({ isOpen, onClose, onConfirm, prompt, selectedModel, mode = "S-1", attachedFiles = [], isDark = false }) {
+export default function CostPreviewModal({
+  isOpen,
+  onClose,
+  onConfirm,        // Called with (provisionId) when user clicks Generate
+  prompt,
+  selectedModel,
+  mode = "S-1",
+  attachedFiles = [],
+  isDark = false,
+  isAuthenticated = false, // Only provision for logged-in users
+}) {
   const model = MODELS.find(m => m.id === selectedModel) || MODELS[0];
   const dk = isDark;
 
-  const [stepIndex, setStepIndex] = useState(-1);
-  const [doneSteps, setDoneSteps] = useState([]);
-  const [ready, setReady] = useState(false);
+  // Provision state
+  const [provisionId, setProvisionId] = useState(null);
+  const [provisionStatus, setProvisionStatus] = useState("idle"); // idle | starting | sandbox_created | installing | configuring | ready | error
+  const [provisionError, setProvisionError] = useState(null);
+  const pollTimerRef = useRef(null);
+  const hasProvisioned = useRef(false);
 
+  // "Generate" button becomes clickable when:
+  // - sandbox_created (fast ~1-2s): user doesn't need to wait for full setup
+  const canGenerate = ["sandbox_created", "installing", "configuring", "ready"].includes(provisionStatus);
+  const allReady = provisionStatus === "ready";
+
+  // Step progress bar duration (active steps)
+  const STEP_DURATIONS = {
+    starting: 1000,
+    sandbox_created: 800,
+    installing: 35000,   // ~30s for code-server install
+    configuring: 8000,   // ~5s config
+  };
+
+  // Start polling provision status
+  const startPolling = useCallback((pId) => {
+    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    pollTimerRef.current = setInterval(async () => {
+      try {
+        const data = await getProvisionStatus(pId);
+        setProvisionStatus(data.status);
+        if (data.status === "ready" || data.status === "error") {
+          clearInterval(pollTimerRef.current);
+          if (data.error) setProvisionError(data.error);
+        }
+      } catch (err) {
+        // Silently ignore polling errors
+        console.warn("Provision status poll failed:", err);
+      }
+    }, 2000);
+  }, []);
+
+  // Start provisioning when modal opens (only for authenticated users)
   useEffect(() => {
-    if (!isOpen) return;
-    setStepIndex(-1);
-    setDoneSteps([]);
-    setReady(false);
+    if (!isOpen) {
+      // Clean up polling when modal closes
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+      return;
+    }
 
-    let total = 0;
-    LOADING_STEPS.forEach((step, i) => {
-      setTimeout(() => setStepIndex(i), total);
-      total += step.duration;
-      setTimeout(() => setDoneSteps(prev => [...prev, i]), total);
-    });
-    setTimeout(() => { setStepIndex(-1); setReady(true); }, total + 200);
-  }, [isOpen]);
+    // Reset state each time modal opens
+    hasProvisioned.current = false;
+    setProvisionId(null);
+    setProvisionStatus("idle");
+    setProvisionError(null);
+
+    if (!isAuthenticated) {
+      // Not logged in → simulate steps (original behavior) so modal still works
+      setProvisionStatus("starting");
+      setTimeout(() => setProvisionStatus("sandbox_created"), 800);
+      setTimeout(() => setProvisionStatus("installing"), 1500);
+      setTimeout(() => setProvisionStatus("configuring"), 2400);
+      setTimeout(() => setProvisionStatus("ready"), 3200);
+      return;
+    }
+
+    // Authenticated → start real provisioning
+    const doProvision = async () => {
+      if (hasProvisioned.current) return;
+      hasProvisioned.current = true;
+      try {
+        setProvisionStatus("starting");
+        const data = await provisionVSCode();
+        setProvisionId(data.provision_id);
+        setProvisionStatus("starting");
+        startPolling(data.provision_id);
+      } catch (err) {
+        console.error("Failed to start VS Code provisioning:", err);
+        // Fallback: simulate steps so the modal still works
+        setProvisionStatus("starting");
+        setTimeout(() => setProvisionStatus("sandbox_created"), 800);
+        setTimeout(() => setProvisionStatus("installing"), 1500);
+        setTimeout(() => setProvisionStatus("configuring"), 2400);
+        setTimeout(() => setProvisionStatus("ready"), 3200);
+      }
+    };
+
+    doProvision();
+
+    return () => {
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    };
+  }, [isOpen, isAuthenticated, startPolling]);
+
+  const handleConfirm = () => {
+    if (!canGenerate) return;
+    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    onConfirm(provisionId); // Pass provisionId to AppBuilder
+  };
 
   return (
     <AnimatePresence>
@@ -200,7 +326,7 @@ export default function CostPreviewModal({ isOpen, onClose, onConfirm, prompt, s
                 </p>
               </div>
 
-              {/* Attached Files — same style as home */}
+              {/* Attached Files */}
               {attachedFiles.length > 0 && (
                 <motion.div
                   initial={{ opacity: 0, y: 6 }}
@@ -236,7 +362,6 @@ export default function CostPreviewModal({ isOpen, onClose, onConfirm, prompt, s
                             border: dk ? "1px solid rgba(255,255,255,0.12)" : "1px solid rgba(80,120,200,0.18)",
                           }}
                         >
-                          {/* Thumbnail */}
                           <div style={{
                             width: "100%",
                             height: "76px",
@@ -277,11 +402,7 @@ export default function CostPreviewModal({ isOpen, onClose, onConfirm, prompt, s
                               </div>
                             )}
                           </div>
-                          {/* File info */}
-                          <div style={{
-                            padding: "5px 7px",
-                            background: dk ? "rgba(0,0,0,0.45)" : "rgba(0,0,0,0.07)",
-                          }}>
+                          <div style={{ padding: "5px 7px", background: dk ? "rgba(0,0,0,0.45)" : "rgba(0,0,0,0.07)" }}>
                             <p style={{
                               fontFamily: "'DM Sans', sans-serif",
                               fontSize: "9.5px",
@@ -309,12 +430,19 @@ export default function CostPreviewModal({ isOpen, onClose, onConfirm, prompt, s
               )}
             </div>
 
-            {/* Loading steps */}
+            {/* ── REAL provisioning steps ── */}
             <div className="px-6 pb-5 space-y-2">
-              {LOADING_STEPS.map((step, i) => {
-                const isDone    = doneSteps.includes(i);
-                const isActive  = stepIndex === i;
-                const isPending = stepIndex < i && !isDone;
+              {PROVISION_STEPS.map((step, i) => {
+                const state = getStepState(step, provisionStatus);
+                const isDone    = state === "done";
+                const isActive  = state === "active";
+                const isPending = state === "pending";
+
+                // Estimate duration for the progress bar
+                const activeStatusKey = Array.isArray(step.activeOn)
+                  ? step.activeOn[0]
+                  : step.activeOn;
+                const barDuration = (STEP_DURATIONS[activeStatusKey] || 3000) / 1000;
 
                 return (
                   <motion.div
@@ -324,6 +452,7 @@ export default function CostPreviewModal({ isOpen, onClose, onConfirm, prompt, s
                     transition={{ delay: 0.1 + i * 0.05, duration: 0.2 }}
                     className="flex items-center gap-3"
                   >
+                    {/* Status icon */}
                     <div style={{ width: 18, height: 18, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
                       {isDone ? (
                         <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", bounce: 0.5 }}>
@@ -344,6 +473,7 @@ export default function CostPreviewModal({ isOpen, onClose, onConfirm, prompt, s
                       )}
                     </div>
 
+                    {/* Label */}
                     <span style={{
                       fontSize: "13px",
                       fontFamily: "'Plus Jakarta Sans', sans-serif",
@@ -355,15 +485,17 @@ export default function CostPreviewModal({ isOpen, onClose, onConfirm, prompt, s
                       {step.label}
                     </span>
 
+                    {/* Progress bar for active step */}
                     {isActive && (
                       <motion.div
+                        key={`bar-${provisionStatus}`}
                         className="flex-1 h-px rounded-full ml-2"
                         style={{ background: dk ? "rgba(255,255,255,0.06)" : "rgba(80,140,220,0.12)", overflow: "hidden" }}
                       >
                         <motion.div
                           initial={{ width: "0%" }}
                           animate={{ width: "100%" }}
-                          transition={{ duration: step.duration / 1000, ease: "linear" }}
+                          transition={{ duration: barDuration, ease: "linear" }}
                           style={{ height: "100%", background: "linear-gradient(90deg, #06b6d4, #0ea5e9)" }}
                         />
                       </motion.div>
@@ -371,6 +503,24 @@ export default function CostPreviewModal({ isOpen, onClose, onConfirm, prompt, s
                   </motion.div>
                 );
               })}
+
+              {/* Error message */}
+              {provisionStatus === "error" && (
+                <motion.p
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  style={{
+                    fontSize: 11,
+                    color: "#f87171",
+                    marginTop: 4,
+                    padding: "6px 8px",
+                    background: "rgba(239,68,68,0.08)",
+                    borderRadius: 6,
+                  }}
+                >
+                  Environment setup failed. You can still generate — VS Code will be set up separately.
+                </motion.p>
+              )}
             </div>
 
             {/* Actions */}
@@ -392,11 +542,11 @@ export default function CostPreviewModal({ isOpen, onClose, onConfirm, prompt, s
               </button>
               <motion.button
                 data-testid="confirm-generate-btn"
-                onClick={ready ? onConfirm : undefined}
-                animate={ready ? { opacity: 1 } : { opacity: 0.4 }}
+                onClick={canGenerate ? handleConfirm : undefined}
+                animate={canGenerate ? { opacity: 1 } : { opacity: 0.4 }}
                 transition={{ duration: 0.4 }}
-                whileHover={ready ? { scale: 1.02 } : {}}
-                whileTap={ready ? { scale: 0.98 } : {}}
+                whileHover={canGenerate ? { scale: 1.02 } : {}}
+                whileTap={canGenerate ? { scale: 0.98 } : {}}
                 className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl"
                 style={{
                   background: "linear-gradient(135deg, #06b6d4, #0ea5e9)",
@@ -405,11 +555,11 @@ export default function CostPreviewModal({ isOpen, onClose, onConfirm, prompt, s
                   fontWeight: 700,
                   fontSize: "14px",
                   letterSpacing: "-0.01em",
-                  boxShadow: ready ? "0 0 20px rgba(6,182,212,0.35)" : "none",
-                  cursor: ready ? "pointer" : "not-allowed",
+                  boxShadow: canGenerate ? "0 0 20px rgba(6,182,212,0.35)" : "none",
+                  cursor: canGenerate ? "pointer" : "not-allowed",
                 }}
               >
-                {ready ? (
+                {canGenerate ? (
                   <> Generate <ArrowRight style={{ width: 14, height: 14 }} /> </>
                 ) : (
                   <span style={{
@@ -417,7 +567,7 @@ export default function CostPreviewModal({ isOpen, onClose, onConfirm, prompt, s
                     fontFamily: "'DM Sans', sans-serif",
                     fontWeight: 500,
                     fontSize: "13px",
-                  }}>Preparing...</span>
+                  }}>Preparing…</span>
                 )}
               </motion.button>
             </div>

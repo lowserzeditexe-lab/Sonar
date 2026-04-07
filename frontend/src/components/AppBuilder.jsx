@@ -8,7 +8,7 @@ import ShareModal from "./ShareModal";
 import DeployPanel from "./DeployPanel";
 import CodebaseModal from "./CodebaseModal";
 import { AGENT_STEPS, MOCK_LOGS } from "../data/mockData";
-import { createProject, updateProject, deleteProject, projectToTask, generateCode, chatWithCode, deploySandbox, killSandbox } from "../api/projects";
+import { createProject, updateProject, deleteProject, projectToTask, generateCode, chatWithCode, deploySandbox, killSandbox, attachCodebaseToProject } from "../api/projects";
 
 // Agent metadata with mode-specific logs
 const AGENT_META_S1 = {
@@ -102,7 +102,7 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
   // Get the right agent meta based on mode
   const agentMeta = mode === "S-2" ? AGENT_META_S2 : AGENT_META_S1;
 
-  const pushTask = async (id, type, name, prompt) => {
+  const pushTask = async (id, type, name, prompt, provisionId = null) => {
     let taskId = id;
 
     // If user is authenticated, create project via API
@@ -119,6 +119,14 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
         const newTask = projectToTask(project);
         setTasks(prev => [newTask, ...prev.filter(t => t.id !== taskId)]);
         setActiveTaskId(taskId);
+
+        // Attach pre-provisioned VS Code sandbox if available
+        if (provisionId) {
+          attachCodebaseToProject(taskId, provisionId).catch(err => {
+            console.warn("Failed to attach VS Code provision to project:", err);
+          });
+        }
+
         return taskId;
       } catch (err) {
         console.error("Failed to create project:", err);
@@ -132,7 +140,7 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
     return taskId;
   };
 
-  const startGeneration = useCallback(async (prompt) => {
+  const startGeneration = useCallback(async (prompt, provisionId = null) => {
     const type = detectProjectType(prompt);
     const name = getProjectName(type);
     const localId = `task-${Date.now()}`;
@@ -152,8 +160,8 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
     setSandboxId(null);
     setIsSandboxLoading(false);
 
-    // Create project (API or local)
-    const taskId = await pushTask(localId, type, name, prompt);
+    // Create project (API or local) + attach provision if available
+    const taskId = await pushTask(localId, type, name, prompt, provisionId);
 
     if (timerRef.current) clearInterval(timerRef.current);
     runFlow(type, name, prompt, taskId);
@@ -324,9 +332,9 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
     };
   }, [initialPrompt, initialTask]);
 
-  const handleConfirmGenerate = () => {
+  const handleConfirmGenerate = (provisionId = null) => {
     setShowCostModal(false);
-    startGeneration(pendingPrompt);
+    startGeneration(pendingPrompt, provisionId);
   };
 
   const handleSendMessage = (msg) => {
@@ -544,6 +552,7 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
         mode={mode}
         attachedFiles={initFiles}
         isDark={isDark}
+        isAuthenticated={!!(user && token)}
       />
 
       <ShareModal
