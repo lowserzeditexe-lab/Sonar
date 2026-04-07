@@ -179,6 +179,8 @@ class ProjectUpdate(BaseModel):
     name: Optional[str] = None
     status: Optional[str] = None
     code: Optional[str] = None
+    backend_code: Optional[str] = None
+    requirements: Optional[str] = None
     messages: Optional[list] = None
     prompt: Optional[str] = None
 
@@ -191,6 +193,8 @@ class ProjectResponse(BaseModel):
     type: str
     status: str
     code: str
+    backend_code: Optional[str] = None
+    requirements: Optional[str] = None
     messages: list
     model: str
     mode: str
@@ -203,9 +207,16 @@ class GenerateRequest(BaseModel):
     mode: str = "S-1"  # "S-1" or "S-2"
     project_id: Optional[str] = None
 
+class AgentRunRequest(BaseModel):
+    prompt: str
+    model: str = "gpt-4o"
+    mode: str = "S-1"  # "S-1" or "S-2"
+    project_id: Optional[str] = None
+
 class ChatRequest(BaseModel):
     message: str
     current_code: str = ""
+    backend_code: Optional[str] = None
     model: str = "gpt-4o"
     mode: str = "S-1"
     project_id: Optional[str] = None
@@ -469,6 +480,10 @@ async def update_project(
         update_doc["status"] = project_update.status
     if project_update.code is not None:
         update_doc["code"] = project_update.code
+    if project_update.backend_code is not None:
+        update_doc["backend_code"] = project_update.backend_code
+    if project_update.requirements is not None:
+        update_doc["requirements"] = project_update.requirements
     if project_update.messages is not None:
         update_doc["messages"] = project_update.messages
     if project_update.prompt is not None:
@@ -1789,6 +1804,297 @@ async def attach_provision_to_project(
     }
 
 
+# ─── Real multi-agent prompts ────────────────────────────────────────────────
+
+PLANNER_PROMPT = """You are the Planner agent in Sonar, an AI-powered full-stack app builder.
+Your job: deeply analyze the user's request and think out loud about what to build.
+
+Think like a senior product engineer:
+- What is the user REALLY asking for? What would make this genuinely useful?
+- What are the 5-7 core features that matter most?
+- What data needs to be stored? What are the key entities?
+- What API endpoints will the frontend need?
+- What edge cases should we handle?
+
+Write your analysis in natural, engaging prose (3-5 sentences). Be specific — no generic statements.
+Then list the key features, API routes needed, and data models.
+Be concrete. This plan will guide the Architect and Coder agents."""
+
+ARCHITECT_PROMPT = """You are the Architect agent in Sonar, an AI-powered full-stack app builder.
+Based on the Planner's analysis, design the technical architecture.
+
+Planner's analysis:
+{plan}
+
+Think out loud about:
+- How to structure the React component (state, effects, key functions)
+- The exact API endpoint shapes (request body, response shape, field names + types)
+- The FastAPI pydantic models needed
+- How the frontend and backend connect
+- Error handling strategy and edge cases
+
+Write your architecture design in natural prose (3-5 sentences), being specific about field names and shapes.
+This will directly guide the Coder agent to write the correct API calls."""
+
+FULLSTACK_CODER_PROMPT_S1 = """You are the Coder agent (S-1 Stable Mode) in Sonar, an AI full-stack app builder.
+Generate a complete, functional full-stack application.
+
+Planner's analysis:
+{plan}
+
+Architect's design:
+{architecture}
+
+User request: {prompt}
+
+Output in this EXACT format with EXACT section headers (nothing before ### THINKING ###):
+
+### THINKING ###
+[2-3 sentences about your implementation approach]
+
+### FRONTEND (App.jsx) ###
+[Complete React component — single default export, Tailwind CSS, real API calls to http://localhost:8000, handles loading/error/empty states]
+
+### BACKEND (main.py) ###
+[Complete FastAPI app — CORS for all origins, in-memory dict/list storage with 3-5 sample items, proper pydantic models, uvicorn startup]
+
+### REQUIREMENTS ###
+fastapi
+uvicorn[standard]
+pydantic
+
+CRITICAL RULES:
+- Frontend: fetch('http://localhost:8000/api/...') for ALL API calls
+- Frontend: import React + hooks at top, single default export
+- Frontend: show loading spinner while fetching, error message on failure, empty state when no data
+- Backend: from fastapi.middleware.cors import CORSMiddleware; app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+- Backend: in-memory storage only (Python dict/list) — NO database, NO SQLite, NO external services
+- Backend: pre-load 3-5 realistic sample items at startup
+- Backend: if __name__ == "__main__": import uvicorn; uvicorn.run(app, host="0.0.0.0", port=8000)
+- Code must be COMPLETE — no TODOs, no placeholders, no "add your code here" """
+
+FULLSTACK_CODER_PROMPT_S2 = """You are the Coder agent (S-2 Deep Mode) in Sonar, an AI full-stack app builder.
+Generate a production-quality, beautifully polished full-stack application.
+
+Planner's analysis:
+{plan}
+
+Architect's design:
+{architecture}
+
+User request: {prompt}
+
+Output in this EXACT format:
+
+### THINKING ###
+[4-5 sentences about your thorough implementation: edge cases you'll handle, UX decisions, what makes this production-quality]
+
+### FRONTEND (App.jsx) ###
+[Production-grade React — beautiful modern UI, smooth transitions, loading skeletons, optimistic updates, responsive, accessible, real-time feel. Use Tailwind CSS exclusively. All API calls to http://localhost:8000.]
+
+### BACKEND (main.py) ###
+[Production-grade FastAPI — input validation with pydantic, comprehensive error handling, search/filter support where applicable, 5-8 realistic pre-loaded data items, clean code with docstrings]
+
+### REQUIREMENTS ###
+fastapi
+uvicorn[standard]
+pydantic
+
+CRITICAL RULES:
+- Frontend: fetch('http://localhost:8000/api/...') for ALL API calls
+- Frontend: beautiful animations with CSS transitions, micro-interactions on hover/click
+- Backend: CORS for all origins (allow_origins=["*"])
+- Backend: in-memory storage only — NO database
+- Backend: 5-8 realistic, diverse sample items pre-loaded
+- No shortcuts. Every feature fully implemented. Production quality."""
+
+FULLSTACK_REVIEWER_PROMPT = """You are the Reviewer agent in Sonar, an AI full-stack app builder.
+Do a quick quality pass on the generated code.
+
+Original request: {prompt}
+
+Check these things (write 3-4 short observations):
+1. Do the frontend API calls match the actual backend routes?
+2. Are the request/response shapes consistent between frontend and backend?
+3. Is CORS configured correctly in the backend?
+4. Are there any obvious bugs or missing error handling?
+
+Write brief, specific observations. If everything looks good, say so concisely."""
+
+FULLSTACK_CHAT_PROMPT = """You are modifying a full-stack application. The user wants to change something.
+
+Current frontend (App.jsx):
+{frontend_code}
+
+Current backend (main.py):
+{backend_code}
+
+User's request: {message}
+
+Output in this EXACT format:
+
+### FRONTEND (App.jsx) ###
+[Complete updated React component]
+
+### BACKEND (main.py) ###
+[Complete updated FastAPI app]
+
+### REQUIREMENTS ###
+[requirements.txt content]
+
+Rules:
+- Only modify what's necessary to fulfill the request
+- Keep existing functionality intact
+- Frontend API calls must match backend routes
+- If only frontend changes, still output the unchanged backend
+- If only backend changes, still output the unchanged frontend"""
+
+
+def parse_code_sections(text: str) -> dict:
+    """Parse coder output into sections using ### SECTION ### markers."""
+    result = {"thinking": "", "frontend": "", "backend": "", "requirements": ""}
+    current_key = None
+    current_lines = []
+
+    marker_map = {
+        "THINKING": "thinking",
+        "FRONTEND": "frontend",
+        "BACKEND": "backend",
+        "REQUIREMENTS": "requirements",
+    }
+
+    for line in text.split("\n"):
+        stripped = line.strip()
+        matched = False
+        for marker, key in marker_map.items():
+            if stripped.startswith("###") and marker in stripped.upper() and stripped.endswith("###"):
+                if current_key is not None:
+                    result[current_key] = "\n".join(current_lines).strip()
+                current_key = key
+                current_lines = []
+                matched = True
+                break
+        if not matched and current_key is not None:
+            current_lines.append(line)
+
+    if current_key is not None:
+        result[current_key] = "\n".join(current_lines).strip()
+
+    # Clean code fences from code sections
+    for key in ("frontend", "backend"):
+        if result[key]:
+            result[key] = clean_code_fences(result[key])
+
+    return result
+
+
+@api_router.post("/agent/run")
+async def run_agent_pipeline(request: AgentRunRequest, req: Request):
+    """Run the full multi-agent pipeline: Planner → Architect → Coder → Reviewer"""
+    user = await get_optional_user(req)
+
+    SSE_HEADERS = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+
+    async def event_stream():
+        try:
+            # ── PLANNER ──────────────────────────────────────────────────────
+            yield f"data: {json.dumps({'type': 'agent_start', 'agent': 'planner', 'label': 'Planner'})}\n\n"
+
+            plan_params = build_litellm_params(request.model, PLANNER_PROMPT, request.prompt)
+            plan_response = await litellm.acompletion(**plan_params)
+            plan_text = ""
+            async for chunk in plan_response:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    plan_text += delta
+                    yield f"data: {json.dumps({'type': 'agent_thinking', 'agent': 'planner', 'content': delta})}\n\n"
+
+            yield f"data: {json.dumps({'type': 'agent_done', 'agent': 'planner'})}\n\n"
+
+            # ── ARCHITECT ────────────────────────────────────────────────────
+            yield f"data: {json.dumps({'type': 'agent_start', 'agent': 'architect', 'label': 'Architect'})}\n\n"
+
+            arch_system = ARCHITECT_PROMPT.format(plan=plan_text[:3000])
+            arch_params = build_litellm_params(request.model, arch_system, "Design the technical architecture for this app.")
+            arch_response = await litellm.acompletion(**arch_params)
+            arch_text = ""
+            async for chunk in arch_response:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    arch_text += delta
+                    yield f"data: {json.dumps({'type': 'agent_thinking', 'agent': 'architect', 'content': delta})}\n\n"
+
+            yield f"data: {json.dumps({'type': 'agent_done', 'agent': 'architect'})}\n\n"
+
+            # ── CODER ────────────────────────────────────────────────────────
+            yield f"data: {json.dumps({'type': 'agent_start', 'agent': 'coder', 'label': 'Coder'})}\n\n"
+
+            coder_template = FULLSTACK_CODER_PROMPT_S2 if request.mode == "S-2" else FULLSTACK_CODER_PROMPT_S1
+            coder_system = coder_template.format(
+                plan=plan_text[:2000],
+                architecture=arch_text[:2000],
+                prompt=request.prompt,
+            )
+            coder_params = build_litellm_params(request.model, coder_system, f"Build this app: {request.prompt}")
+            coder_response = await litellm.acompletion(**coder_params)
+            code_buffer = ""
+            async for chunk in coder_response:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    code_buffer += delta
+                    yield f"data: {json.dumps({'type': 'code_chunk', 'content': delta})}\n\n"
+
+            yield f"data: {json.dumps({'type': 'agent_done', 'agent': 'coder'})}\n\n"
+
+            # Parse code sections
+            sections = parse_code_sections(code_buffer)
+            frontend_code = sections.get("frontend", "")
+            backend_code = sections.get("backend", "")
+            requirements = sections.get("requirements", "fastapi\nuvicorn[standard]\npydantic")
+
+            # ── REVIEWER ─────────────────────────────────────────────────────
+            yield f"data: {json.dumps({'type': 'agent_start', 'agent': 'reviewer', 'label': 'Reviewer'})}\n\n"
+
+            reviewer_system = FULLSTACK_REVIEWER_PROMPT.format(prompt=request.prompt)
+            reviewer_user = f"Frontend preview (first 800 chars):\n{frontend_code[:800]}\n\nBackend preview (first 800 chars):\n{backend_code[:800]}"
+            reviewer_params = build_litellm_params(request.model, reviewer_system, reviewer_user)
+            reviewer_response = await litellm.acompletion(**reviewer_params)
+            async for chunk in reviewer_response:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield f"data: {json.dumps({'type': 'agent_thinking', 'agent': 'reviewer', 'content': delta})}\n\n"
+
+            yield f"data: {json.dumps({'type': 'agent_done', 'agent': 'reviewer'})}\n\n"
+
+            # ── SEND FINAL FILES ──────────────────────────────────────────────
+            yield f"data: {json.dumps({'type': 'files', 'frontend': frontend_code, 'backend': backend_code, 'requirements': requirements})}\n\n"
+
+            # Persist to project
+            if user and request.project_id:
+                await db.projects.update_one(
+                    {"id": request.project_id, "user_id": user["id"]},
+                    {"$set": {
+                        "code": frontend_code,
+                        "backend_code": backend_code,
+                        "requirements": requirements,
+                        "status": "complete",
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }}
+                )
+
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+        except Exception as e:
+            logger.error(f"Agent pipeline error: {str(e)}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers=SSE_HEADERS)
+
+
 def clean_code_fences(text: str) -> str:
     """Remove markdown code fences from LLM output."""
     code = text.strip()
@@ -1902,60 +2208,87 @@ async def generate_code(request: GenerateRequest, req: Request):
 
 @api_router.post("/chat")
 async def chat_with_code(request: ChatRequest, req: Request):
-    """Modify existing React code via LLM with real token-by-token streaming."""
+    """Modify existing full-stack code via LLM with real token-by-token streaming."""
     user = await get_optional_user(req)
+
+    SSE_HEADERS = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
 
     async def event_stream():
         full_code_buffer = ""
         try:
-            # Build system prompt with current code injected
-            if request.mode == "S-1":
-                system_prompt = S1_CHAT_PROMPT.format(current_code=request.current_code)
-            else:
-                system_prompt = S2_CHAT_PROMPT.format(current_code=request.current_code)
-
-            # Build litellm params with streaming
-            params = build_litellm_params(request.model, system_prompt, request.message)
-
-            # Real token streaming
-            response = await litellm.acompletion(**params)
-
-            async for chunk in response:
-                delta = chunk.choices[0].delta.content
-                if delta:
-                    full_code_buffer += delta
-                    yield f"data: {json.dumps({'type': 'chunk', 'content': delta})}\n\n"
-
-            # Clean code fences
-            final_code = clean_code_fences(full_code_buffer)
-
-            # Send done event
-            yield f"data: {json.dumps({'type': 'done', 'full_code': final_code})}\n\n"
-
-            # Persist to project if authenticated
-            if user and request.project_id:
-                await db.projects.update_one(
-                    {"id": request.project_id, "user_id": user["id"]},
-                    {"$set": {
-                        "code": final_code,
-                        "status": "complete",
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }}
+            # Full-stack mode if backend_code provided
+            if request.backend_code:
+                system_prompt = FULLSTACK_CHAT_PROMPT.format(
+                    frontend_code=request.current_code[:3000],
+                    backend_code=request.backend_code[:3000],
+                    message=request.message,
                 )
+                params = build_litellm_params(request.model, system_prompt, request.message)
+                response = await litellm.acompletion(**params)
+
+                async for chunk in response:
+                    delta = chunk.choices[0].delta.content
+                    if delta:
+                        full_code_buffer += delta
+                        yield f"data: {json.dumps({'type': 'chunk', 'content': delta})}\n\n"
+
+                # Parse sections
+                sections = parse_code_sections(full_code_buffer)
+                final_frontend = sections.get("frontend", "") or clean_code_fences(full_code_buffer)
+                final_backend = sections.get("backend", "") or request.backend_code
+                final_requirements = sections.get("requirements", "fastapi\nuvicorn[standard]\npydantic")
+
+                yield f"data: {json.dumps({'type': 'done', 'full_code': final_frontend, 'backend_code': final_backend, 'requirements': final_requirements})}\n\n"
+
+                if user and request.project_id:
+                    await db.projects.update_one(
+                        {"id": request.project_id, "user_id": user["id"]},
+                        {"$set": {
+                            "code": final_frontend,
+                            "backend_code": final_backend,
+                            "requirements": final_requirements,
+                            "status": "complete",
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        }}
+                    )
+            else:
+                # Single-file React mode (legacy)
+                if request.mode == "S-1":
+                    system_prompt = S1_CHAT_PROMPT.format(current_code=request.current_code)
+                else:
+                    system_prompt = S2_CHAT_PROMPT.format(current_code=request.current_code)
+
+                params = build_litellm_params(request.model, system_prompt, request.message)
+                response = await litellm.acompletion(**params)
+
+                async for chunk in response:
+                    delta = chunk.choices[0].delta.content
+                    if delta:
+                        full_code_buffer += delta
+                        yield f"data: {json.dumps({'type': 'chunk', 'content': delta})}\n\n"
+
+                final_code = clean_code_fences(full_code_buffer)
+                yield f"data: {json.dumps({'type': 'done', 'full_code': final_code})}\n\n"
+
+                if user and request.project_id:
+                    await db.projects.update_one(
+                        {"id": request.project_id, "user_id": user["id"]},
+                        {"$set": {
+                            "code": final_code,
+                            "status": "complete",
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        }}
+                    )
 
         except Exception as e:
             logger.error(f"Chat error: {str(e)}")
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        }
-    )
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers=SSE_HEADERS)
 
 # Include the router in the main app
 app.include_router(api_router)

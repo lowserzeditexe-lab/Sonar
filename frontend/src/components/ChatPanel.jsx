@@ -92,9 +92,10 @@ function AIMsg({ content, isNew, isDark }) {
 }
 
 /* ── Agent inline step ── */
-function AgentMsg({ agentId, label, status, steps, isNew, isDark }) {
+function AgentMsg({ agentId, label, status, thinking, steps, isNew, isDark }) {
   const Icon = AGENT_ICONS[agentId] || Code2;
   const isDone = status === "done";
+
   return (
     <motion.div initial={isNew ? { opacity: 0, y: 8 } : false} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22 }}
       className="flex gap-3 mb-4">
@@ -116,17 +117,46 @@ function AgentMsg({ agentId, label, status, steps, isNew, isDark }) {
             {label}
           </span>
           <span style={{ fontSize: "11px", color: isDone ? "rgba(16,185,129,0.6)" : "rgba(6,182,212,0.5)", fontFamily: "'Manrope',sans-serif" }}>
-            {isDone ? "· Done" : "· Working"}
+            {isDone ? "· Done" : "· Thinking..."}
           </span>
         </div>
-        <div className="space-y-0.5">
-          {steps.map((s, i) => (
-            <motion.div key={i} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.08 }}
-              className="flex items-center gap-1.5 text-xs" style={{ color: isDark ? "rgba(100,120,150,0.75)" : "rgba(40,70,130,0.6)", fontFamily: "'Manrope',sans-serif" }}>
-              <span style={{ color: isDone ? "rgba(16,185,129,0.5)" : "rgba(6,182,212,0.4)" }}>›</span> {s}
-            </motion.div>
-          ))}
-        </div>
+
+        {/* Real thinking text from LLM */}
+        {thinking && (
+          <div className="mt-1 mb-1 rounded-lg px-3 py-2"
+            style={{
+              background: isDark ? "rgba(6,182,212,0.04)" : "rgba(6,182,212,0.05)",
+              border: `1px solid ${isDark ? "rgba(6,182,212,0.1)" : "rgba(6,182,212,0.15)"}`,
+              maxHeight: isDone ? "none" : "120px",
+              overflow: isDone ? "visible" : "hidden",
+            }}>
+            <p style={{
+              fontSize: "11.5px", lineHeight: 1.65,
+              color: isDark ? "rgba(148,181,210,0.75)" : "rgba(30,60,120,0.65)",
+              fontFamily: "'Manrope',sans-serif",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+            }}>
+              {thinking}
+              {!isDone && (
+                <motion.span animate={{ opacity: [1, 0, 1] }} transition={{ duration: 0.7, repeat: Infinity }}
+                  style={{ color: "#06b6d4", marginLeft: 2 }}>▋</motion.span>
+              )}
+            </p>
+          </div>
+        )}
+
+        {/* Legacy steps (for backward compat) */}
+        {steps && steps.length > 0 && (
+          <div className="space-y-0.5">
+            {steps.map((s, i) => (
+              <motion.div key={i} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.08 }}
+                className="flex items-center gap-1.5 text-xs" style={{ color: isDark ? "rgba(100,120,150,0.75)" : "rgba(40,70,130,0.6)", fontFamily: "'Manrope',sans-serif" }}>
+                <span style={{ color: isDone ? "rgba(16,185,129,0.5)" : "rgba(6,182,212,0.4)" }}>›</span> {s}
+              </motion.div>
+            ))}
+          </div>
+        )}
       </div>
     </motion.div>
   );

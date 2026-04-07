@@ -299,7 +299,7 @@ export function generateCode({ prompt, model, mode, project_id }, onChunk, onDon
  * @param {Function} onError - Called with error message
  * @returns {AbortController} - Call .abort() to cancel
  */
-export function chatWithCode({ message, current_code, model, mode, project_id }, onChunk, onDone, onError) {
+export function chatWithCode({ message, current_code, backend_code, model, mode, project_id }, onChunk, onDone, onError) {
   const controller = new AbortController();
 
   const token = api.defaults.headers.common["Authorization"]?.replace("Bearer ", "") || "";
@@ -310,7 +310,7 @@ export function chatWithCode({ message, current_code, model, mode, project_id },
       "Content-Type": "application/json",
       ...(token ? { "Authorization": `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ message, current_code: current_code || "", model: model || "gpt-4o", mode: mode || "S-1", project_id }),
+    body: JSON.stringify({ message, current_code: current_code || "", backend_code: backend_code || null, model: model || "gpt-4o", mode: mode || "S-1", project_id }),
     signal: controller.signal,
   })
     .then(async (response) => {
@@ -336,7 +336,7 @@ export function chatWithCode({ message, current_code, model, mode, project_id },
               if (data.type === "chunk") {
                 onChunk?.(data.content);
               } else if (data.type === "done") {
-                onDone?.(data.full_code);
+                onDone?.(data.full_code, data.backend_code || null, data.requirements || null);
               } else if (data.type === "error") {
                 onError?.(data.message);
               }
@@ -351,6 +351,93 @@ export function chatWithCode({ message, current_code, model, mode, project_id },
       if (err.name !== "AbortError") {
         onError?.(err.message);
       }
+    });
+
+  return controller;
+}
+
+/**
+ * Run the full multi-agent pipeline (Planner → Architect → Coder → Reviewer).
+ * Generates a full-stack app (React frontend + FastAPI backend).
+ *
+ * @param {Object} params - { prompt, model, mode, project_id }
+ * @param {Function} onAgentStart   - (agent, label) agent started
+ * @param {Function} onAgentThink   - (agent, content) streaming thinking token
+ * @param {Function} onAgentDone    - (agent) agent finished
+ * @param {Function} onCodeChunk    - (content) coder streaming token
+ * @param {Function} onFiles        - ({ frontend, backend, requirements }) final files
+ * @param {Function} onDone         - () pipeline complete
+ * @param {Function} onError        - (message) error
+ * @returns {AbortController}
+ */
+export function runAgentPipeline(
+  { prompt, model, mode, project_id },
+  onAgentStart,
+  onAgentThink,
+  onAgentDone,
+  onCodeChunk,
+  onFiles,
+  onDone,
+  onError
+) {
+  const controller = new AbortController();
+  const token = api.defaults.headers.common["Authorization"]?.replace("Bearer ", "") || "";
+
+  fetch(`${BACKEND_URL}/api/agent/run`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ prompt, model: model || "gpt-4o", mode: mode || "S-1", project_id }),
+    signal: controller.signal,
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: "Unknown error" }));
+        onError?.(err.detail || `HTTP ${response.status}`);
+        return;
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.type === "agent_start") {
+                onAgentStart?.(data.agent, data.label);
+              } else if (data.type === "agent_thinking") {
+                onAgentThink?.(data.agent, data.content);
+              } else if (data.type === "agent_done") {
+                onAgentDone?.(data.agent);
+              } else if (data.type === "code_chunk") {
+                onCodeChunk?.(data.content);
+              } else if (data.type === "files") {
+                onFiles?.(data);
+              } else if (data.type === "done") {
+                onDone?.();
+              } else if (data.type === "error") {
+                onError?.(data.message);
+              }
+            } catch (e) {
+              // Ignore parse errors
+            }
+          }
+        }
+      }
+    })
+    .catch((err) => {
+      if (err.name !== "AbortError") onError?.(err.message);
     });
 
   return controller;
