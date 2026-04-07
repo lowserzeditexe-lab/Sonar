@@ -1,22 +1,30 @@
 [
   {
-    "content": "Phase 1: Clone Sonar repo + migrate into /app",
+    "content": "Backend: Add /api/sandbox/vscode/provision endpoint (fast init + background task)",
     "status": "completed"
   },
   {
-    "content": "Phase 1: POC - Prove E2B code-server works in isolation",
+    "content": "Backend: Add /api/sandbox/vscode/provision/{id}/status polling endpoint",
     "status": "completed"
   },
   {
-    "content": "Phase 2: Backend - add codebase sandbox endpoints to server.py",
+    "content": "Backend: Add attach endpoint to link provision to project",
     "status": "completed"
   },
   {
-    "content": "Phase 2: Frontend - Code button + CodebaseModal in LandingPage + AppBuilder",
+    "content": "Frontend: Rework CostPreviewModal with real E2B steps (no fake setTimeout)",
     "status": "completed"
   },
   {
-    "content": "Phase 2: E2E testing",
+    "content": "Frontend: Pass provisionId to AppBuilder to attach to project after creation",
+    "status": "completed"
+  },
+  {
+    "content": "Fix: Add EMERGENT_LLM_KEY to enable code generation",
+    "status": "completed"
+  },
+  {
+    "content": "Testing: E2E test of the full parallel flow",
     "status": "completed"
   }
 ]
