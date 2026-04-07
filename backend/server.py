@@ -1114,6 +1114,33 @@ def _generate_vscode_password(length: int = 20) -> str:
     return ''.join(_secrets.choice(alphabet) for _ in range(length))
 
 
+def _start_codeserver_and_wait(sandbox, timeout_s: int = 40) -> None:
+    """
+    Start code-server in background and block until port 8080 is listening.
+    Raises RuntimeError if code-server doesn't come up within timeout_s seconds.
+    """
+    # Launch using shell background so the process persists
+    sandbox.commands.run(
+        "HOME=/home/user setsid /home/user/.local/bin/code-server "
+        "--bind-addr 0.0.0.0:8080 /home/user/workspace "
+        "> /home/user/code-server.log 2>&1 &",
+        timeout=15,
+    )
+    # Poll until port 8080 is bound
+    for _ in range(timeout_s):
+        try:
+            check = sandbox.commands.run(
+                "ss -tlnp 2>/dev/null | grep -c :8080 || true",
+                timeout=5,
+            )
+            if check.stdout.strip() not in ("", "0"):
+                return  # ready
+        except Exception:
+            pass
+        time.sleep(1)
+    raise RuntimeError("code-server did not bind to port 8080 within the timeout")
+
+
 def _create_vscode_sandbox_sync(project_code: str = "") -> dict:
     """
     Creates an E2B sandbox, installs code-server, configures it with a password,
@@ -1155,15 +1182,8 @@ cert: false
             placeholder = """// Your generated code will appear here.\n// Come back after generating your app!\n"""
             sandbox.files.write("/home/user/workspace/App.jsx", placeholder)
 
-        # Start code-server in background
-        sandbox.commands.run(
-            "HOME=/home/user nohup /home/user/.local/bin/code-server "
-            "--bind-addr 0.0.0.0:8080 /home/user/workspace > /home/user/code-server.log 2>&1 &",
-            background=True,
-        )
-
-        # Wait a few seconds for code-server to come up
-        time.sleep(6)
+        # Start code-server and wait until port 8080 is ready
+        _start_codeserver_and_wait(sandbox, timeout_s=45)
 
         # Get public URL
         host = sandbox.get_host(8080)
@@ -1396,13 +1416,8 @@ cert: false
             "// Your generated app will appear here once generation completes.\n"
         )
 
-        # Stage 4: Start code-server
-        sandbox.commands.run(
-            "HOME=/home/user nohup /home/user/.local/bin/code-server "
-            "--bind-addr 0.0.0.0:8080 /home/user/workspace > /home/user/code-server.log 2>&1 &",
-            background=True,
-        )
-        time.sleep(6)  # Let code-server start
+        # Stage 4: Start code-server and wait for it to bind
+        _start_codeserver_and_wait(sandbox, timeout_s=45)
 
         # Get public URL
         host = sandbox.get_host(8080)

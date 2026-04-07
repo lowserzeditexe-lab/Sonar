@@ -10,9 +10,7 @@ const DEPLOY_STEPS = [
   { label: "Going live",               duration: 600 },
 ];
 
-const LIVE_URL = "https://my-app.sonar.sh";
-
-export default function DeployPanel({ isOpen, onClose, projectName, isDark = false }) {
+export default function DeployPanel({ isOpen, onClose, projectName, isDark = false, liveUrl }) {
   const dk = isDark;
 
   // states: "idle" | "deploying" | "done"
@@ -21,15 +19,24 @@ export default function DeployPanel({ isOpen, onClose, projectName, isDark = fal
   const [doneSteps, setDoneSteps] = useState([]);
   const [copied, setCopied] = useState(false);
 
-  // reset when panel opens
+  // Live URL to use — real E2B sandbox URL if available
+  const deployedUrl = liveUrl || "https://my-app.sonar.sh";
+
+  // If we already have a live URL, go straight to "done" when opening
   useEffect(() => {
     if (isOpen) {
-      setPhase("idle");
-      setStepIndex(-1);
-      setDoneSteps([]);
+      if (liveUrl) {
+        setPhase("done");
+        setStepIndex(-1);
+        setDoneSteps(DEPLOY_STEPS.map((_, i) => i));
+      } else {
+        setPhase("idle");
+        setStepIndex(-1);
+        setDoneSteps([]);
+      }
       setCopied(false);
     }
-  }, [isOpen]);
+  }, [isOpen, liveUrl]);
 
   // close on Escape
   useEffect(() => {
@@ -56,7 +63,7 @@ export default function DeployPanel({ isOpen, onClose, projectName, isDark = fal
   };
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(LIVE_URL).catch(() => {});
+    navigator.clipboard.writeText(deployedUrl).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 2200);
   };
@@ -532,7 +539,7 @@ export default function DeployPanel({ isOpen, onClose, projectName, isDark = fal
                           textOverflow: "ellipsis",
                           whiteSpace: "nowrap",
                         }}>
-                          {LIVE_URL}
+                          {deployedUrl}
                         </span>
                         <motion.button
                           whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.97 }}
@@ -569,7 +576,7 @@ export default function DeployPanel({ isOpen, onClose, projectName, isDark = fal
                       style={{ display: "flex", gap: "10px" }}
                     >
                       <a
-                        href={LIVE_URL}
+                        href={deployedUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         style={{

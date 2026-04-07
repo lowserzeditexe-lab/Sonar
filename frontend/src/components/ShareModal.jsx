@@ -2,16 +2,18 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Copy, Check, Globe, Lock, ChevronDown, Link2, QrCode } from "lucide-react";
 
-const SHARE_URL = "https://sonar.app/share/abc123";
+const SHARE_URL_FALLBACK = "https://sonar.app/share/abc123";
 
-export default function ShareModal({ isOpen, onClose, projectName, isDark = false }) {
+export default function ShareModal({ isOpen, onClose, projectName, isDark = false, liveUrl }) {
   const [copied, setCopied] = useState(false);
   const [access, setAccess] = useState("anyone"); // anyone | restricted
   const [showAccess, setShowAccess] = useState(false);
   const dk = isDark;
 
+  const shareUrl = liveUrl || SHARE_URL_FALLBACK;
+
   const handleCopy = () => {
-    navigator.clipboard.writeText(SHARE_URL).catch(() => {});
+    navigator.clipboard.writeText(shareUrl).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -152,7 +154,7 @@ export default function ShareModal({ isOpen, onClose, projectName, isDark = fals
                   }}>
                   <Link2 style={{ width: 14, height: 14, color: dk ? "#64748b" : "rgba(40,70,130,0.4)", flexShrink: 0, marginLeft: 4 }} />
                   <span className="flex-1 text-xs truncate" style={{ color: dk ? "rgba(180,195,215,0.8)" : "rgba(30,60,120,0.6)", fontFamily: "'Manrope',sans-serif" }}>
-                    {SHARE_URL}
+                    {shareUrl}
                   </span>
                   <motion.button onClick={handleCopy}
                     whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
@@ -166,6 +168,25 @@ export default function ShareModal({ isOpen, onClose, projectName, isDark = fals
                   </motion.button>
                 </div>
               </div>
+
+              {/* Open live preview button */}
+              {liveUrl && (
+                <a
+                  href={liveUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-semibold transition-all"
+                  style={{
+                    background: "linear-gradient(135deg, #06b6d4, #0ea5e9)",
+                    color: "#000",
+                    textDecoration: "none",
+                    boxShadow: "0 0 18px rgba(6,182,212,0.25)",
+                  }}
+                >
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#000", boxShadow: "0 0 6px #10b981" }} />
+                  Open Live Preview
+                </a>
+              )}
             </div>
           </motion.div>
         </motion.div>

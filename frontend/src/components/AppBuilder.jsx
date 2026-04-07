@@ -618,6 +618,7 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
         onClose={() => setShowShare(false)}
         projectName={projectName}
         isDark={isDark}
+        liveUrl={sandboxUrl}
       />
 
       <DeployPanel
@@ -625,6 +626,7 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
         onClose={() => setShowDeploy(false)}
         projectName={projectName}
         isDark={isDark}
+        liveUrl={sandboxUrl}
       />
     </div>
   );
