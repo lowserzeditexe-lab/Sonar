@@ -4,7 +4,7 @@ from datetime import datetime
 import json
 
 class SonarAPITester:
-    def __init__(self, base_url="https://dev-environment-114.preview.emergentagent.com"):
+    def __init__(self, base_url="https://takeover-app-1.preview.emergentagent.com"):
         self.base_url = base_url
         self.token = None
         self.user_id = None
