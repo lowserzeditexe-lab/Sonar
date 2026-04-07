@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { Rocket, Share2, LayoutGrid, Zap, Eye, Code2, ExternalLink } from "lucide-react";
+import { Rocket, Share2, LayoutGrid, Zap, Eye, Code2 } from "lucide-react";
 
 export default function TopBar({
   isGenerating,
@@ -147,63 +147,35 @@ export default function TopBar({
           Share
         </motion.button>
 
-        {/* Deploy / Live button */}
-        <AnimatePresence mode="wait">
-          {isLive ? (
-            // App is live — show green Live button that opens the live URL
-            <motion.a
-              key="live"
-              href={liveUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              data-testid="deploy-button"
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              transition={{ duration: 0.2 }}
-              whileHover={{ scale: 1.03 }}
-              whileTap={{ scale: 0.97 }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold"
-              style={{
-                background: "linear-gradient(135deg, #10b981, #059669)",
-                color: "#fff",
-                boxShadow: "0 0 16px rgba(16,185,129,0.35)",
-                textDecoration: "none",
-                cursor: "pointer",
-              }}
-              onClick={e => { e.preventDefault(); onDeploy(); }}
-            >
-              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "rgba(255,255,255,0.8)", boxShadow: "0 0 5px #fff" }} />
-              Live
-              <ExternalLink style={{ width: 11, height: 11, opacity: 0.8 }} />
-            </motion.a>
-          ) : (
-            // Not live yet — Deploy button
-            <motion.button
-              key="deploy"
-              data-testid="deploy-button"
-              onClick={previewReady ? onDeploy : undefined}
-              disabled={isGenerating}
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              whileHover={previewReady && !isGenerating ? { scale: 1.03 } : {}}
-              whileTap={previewReady && !isGenerating ? { scale: 0.97 } : {}}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all"
-              style={{
-                background: isGenerating || !previewReady
-                  ? (dk ? "rgba(30,41,59,0.5)" : "rgba(0,0,0,0.06)")
-                  : "linear-gradient(135deg,#06b6d4,#0ea5e9)",
-                color: isGenerating || !previewReady ? (dk ? "#475569" : "#94a3b8") : "#000",
-                boxShadow: !isGenerating && previewReady ? "0 0 16px rgba(6,182,212,0.3)" : "none",
-                cursor: isGenerating || !previewReady ? "not-allowed" : "pointer",
-              }}
-            >
-              <Rocket style={{ width: 13, height: 13 }} />
-              Deploy
-            </motion.button>
+        {/* Deploy button — always opens the Deploy panel; green dot when already deployed */}
+        <motion.button
+          data-testid="deploy-button"
+          onClick={previewReady ? onDeploy : undefined}
+          disabled={isGenerating}
+          whileHover={previewReady && !isGenerating ? { scale: 1.03 } : {}}
+          whileTap={previewReady && !isGenerating ? { scale: 0.97 } : {}}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all"
+          style={{
+            background: isGenerating || !previewReady
+              ? (dk ? "rgba(30,41,59,0.5)" : "rgba(0,0,0,0.06)")
+              : isLive
+              ? "linear-gradient(135deg, #059669, #10b981)"
+              : "linear-gradient(135deg,#06b6d4,#0ea5e9)",
+            color: isGenerating || !previewReady ? (dk ? "#475569" : "#94a3b8") : "#000",
+            boxShadow: !isGenerating && previewReady
+              ? isLive
+                ? "0 0 16px rgba(16,185,129,0.35)"
+                : "0 0 16px rgba(6,182,212,0.3)"
+              : "none",
+            cursor: isGenerating || !previewReady ? "not-allowed" : "pointer",
+          }}
+        >
+          {isLive && (
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "rgba(255,255,255,0.85)", boxShadow: "0 0 5px rgba(255,255,255,0.8)", flexShrink: 0 }} />
           )}
-        </AnimatePresence>
+          {!isLive && <Rocket style={{ width: 13, height: 13 }} />}
+          Deploy
+        </motion.button>
 
         {/* User avatar */}
         {user && (

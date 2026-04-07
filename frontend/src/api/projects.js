@@ -82,12 +82,63 @@ export async function killSandbox(sandboxId) {
 }
 
 /**
- * Deploy project to Vercel — real permanent deployment.
- * Returns { url, deployment_id, project_name, ready_state }
+ * Deploy project to Vercel via SSE streaming.
+ * Calls onStep({ step, status, error? }) for each phase.
+ * Calls onComplete({ url, deployment_id }) when done.
+ * Calls onError(message) on failure.
+ * Returns AbortController.
  */
-export async function deployToVercel(projectId) {
-  const res = await api.post("/api/deploy/vercel", { project_id: projectId });
-  return res.data;
+export function deployToVercel(projectId, onStep, onComplete, onError) {
+  const controller = new AbortController();
+  const token = api.defaults.headers.common["Authorization"]?.replace("Bearer ", "") || "";
+
+  fetch(`${process.env.REACT_APP_BACKEND_URL}/api/deploy/vercel`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ project_id: projectId }),
+    signal: controller.signal,
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: "Unknown error" }));
+        onError?.(err.detail || `HTTP ${response.status}`);
+        return;
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.step === "complete") {
+                onComplete?.({ url: data.url, deployment_id: data.deployment_id });
+              } else if (data.step === "error") {
+                onError?.(data.error || "Deployment failed");
+              } else {
+                onStep?.(data);
+              }
+            } catch { /* ignore parse errors */ }
+          }
+        }
+      }
+    })
+    .catch((err) => {
+      if (err.name !== "AbortError") onError?.(err.message);
+    });
+
+  return controller;
 }
 export async function syncCodeToWorkspace(projectId) {
   try {

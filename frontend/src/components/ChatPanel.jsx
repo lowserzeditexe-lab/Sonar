@@ -20,14 +20,39 @@ function SonarAvatar({ size = 24 }) {
   );
 }
 
-/* ── User message ── */
-function UserMsg({ content, isNew, isDark }) {
+function UserAvatar({ user, size = 26 }) {
+  const initials = (user?.name || user?.email || "U").slice(0, 2).toUpperCase();
+  const avatarUrl = user?.avatar_url || null;
   return (
-    <motion.div 
-      initial={isNew ? { opacity: 0, y: 8 } : false} 
-      animate={{ opacity: 1, y: 0 }} 
-      transition={{ duration: 0.22 }} 
-      className="mb-5 flex justify-end"
+    <div className="flex-shrink-0 overflow-hidden"
+      style={{
+        width: size, height: size, borderRadius: "50%",
+        background: avatarUrl ? "transparent" : "linear-gradient(135deg, #7dd3fc, #38bdf8, #0ea5e9)",
+        boxShadow: "0 1px 6px rgba(14,165,233,0.25)",
+        flexShrink: 0,
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+      {avatarUrl ? (
+        <img src={avatarUrl} alt={initials}
+          style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "50%", display: "block" }}
+          onError={e => { e.currentTarget.style.display = "none"; }} />
+      ) : (
+        <span style={{ fontFamily: "'Outfit', sans-serif", fontWeight: 800, fontSize: size * 0.38, color: "#fff", textTransform: "uppercase" }}>
+          {initials}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/* ── User message ── */
+function UserMsg({ content, isNew, isDark, user }) {
+  return (
+    <motion.div
+      initial={isNew ? { opacity: 0, y: 8 } : false}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22 }}
+      className="mb-5 flex justify-end items-end gap-2"
     >
       <div style={{ maxWidth: "75%", width: "fit-content" }}>
         <div className="text-sm leading-relaxed px-4 py-3 rounded-2xl"
@@ -47,6 +72,8 @@ function UserMsg({ content, isNew, isDark }) {
           {formatTime()}
         </p>
       </div>
+      {/* Profile icon — same as the one in the nav/menu */}
+      <UserAvatar user={user} size={26} />
     </motion.div>
   );
 }
@@ -120,7 +147,7 @@ function ProcessingRow({ isDark }) {
   );
 }
 
-export default function ChatPanel({ messages, isTyping, isGenerating, onSendMessage, onReset, isDark = false, currentCode = "", projectName = "my-app" }) {
+export default function ChatPanel({ messages, isTyping, isGenerating, onSendMessage, onReset, isDark = false, currentCode = "", projectName = "my-app", user = null }) {
   const [inputVal, setInputVal] = useState("");
   const [showScroll, setShowScroll] = useState(false);
   const [showGitHubPush, setShowGitHubPush] = useState(false);
@@ -152,7 +179,7 @@ export default function ChatPanel({ messages, isTyping, isGenerating, onSendMess
         <AnimatePresence initial={false}>
           {messages.map((msg, i) => {
             const isNew = i === messages.length - 1;
-            if (msg.role === "user") return <UserMsg key={i} content={msg.content} isNew={isNew} isDark={dk} />;
+            if (msg.role === "user") return <UserMsg key={i} content={msg.content} isNew={isNew} isDark={dk} user={user} />;
             if (msg.role === "assistant") return <AIMsg key={i} content={msg.content} isNew={isNew} isDark={dk} />;
             if (msg.role === "agent") return <AgentMsg key={i} agentId={msg.agentId} label={msg.label} status={msg.status} steps={msg.steps} isNew={isNew} isDark={dk} />;
             return null;

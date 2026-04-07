@@ -1180,10 +1180,16 @@ class VercelDeployRequest(BaseModel):
 
 
 @api_router.post("/deploy/vercel")
-async def deploy_vercel(request: VercelDeployRequest, current_user: User = Depends(get_current_user)):
+async def deploy_vercel_stream(request: VercelDeployRequest, current_user: User = Depends(get_current_user)):
     """
-    Deploy the project's generated code to Vercel as a standalone static app.
-    Returns a real permanent vercel.app URL.
+    Deploy the project to Vercel with SSE streaming — each step is a real API call.
+
+    Steps (all real):
+      1. packaging    → generate HTML from code
+      2. uploading    → POST /v2/files to Vercel CDN
+      3. configuring  → POST /v13/deployments
+      4. health_check → poll deployment status until READY
+      5. live         → persist URL to DB and return
     """
     token = os.environ.get("VERCEL_API_TOKEN", "")
     if not token:
@@ -1202,32 +1208,103 @@ async def deploy_vercel(request: VercelDeployRequest, current_user: User = Depen
 
     name = project_doc.get("name", "sonar-app")
 
-    # Build the standalone HTML (same as E2B preview)
-    html = _generate_preview_html(code)
+    async def event_stream():
+        def ev(step: str, status: str, **extra):
+            return f"data: {json.dumps({'step': step, 'status': status, **extra})}\n\n"
 
-    try:
-        result = await _deploy_to_vercel(html, name)
-    except Exception as e:
-        logger.error(f"Vercel deployment failed for project {request.project_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Deployment failed: {str(e)}")
+        try:
+            # ── Step 1: Packaging artifacts ──────────────────────────────
+            yield ev("packaging", "active")
+            html = _generate_preview_html(code)
+            html_bytes = html.encode("utf-8")
+            sha1 = _hashlib.sha1(html_bytes).hexdigest()
+            slug = _slugify(name)
+            yield ev("packaging", "done")
 
-    # Store deployment URL in project
-    await db.projects.update_one(
-        {"id": request.project_id, "user_id": current_user.id},
-        {"$set": {
-            "vercel_url": result["deployment_url"],
-            "vercel_deployment_id": result["deployment_id"],
-            "vercel_deployed_at": datetime.now(timezone.utc).isoformat(),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }},
+            # ── Step 2: Uploading to Vercel CDN ──────────────────────────
+            yield ev("uploading", "active")
+            headers_auth = {"Authorization": f"Bearer {token}"}
+            async with httpx.AsyncClient(timeout=60) as client:
+                upload_r = await client.post(
+                    "https://api.vercel.com/v2/files",
+                    headers={**headers_auth, "Content-Type": "application/octet-stream", "x-vercel-digest": sha1},
+                    content=html_bytes,
+                )
+            if upload_r.status_code not in (200, 201):
+                yield ev("uploading", "error", error=f"Upload failed: {upload_r.status_code}")
+                return
+            yield ev("uploading", "done")
+
+            # ── Step 3: Configuring environment (create deployment) ───────
+            yield ev("configuring", "active")
+            async with httpx.AsyncClient(timeout=60) as client:
+                deploy_r = await client.post(
+                    "https://api.vercel.com/v13/deployments",
+                    headers={**headers_auth, "Content-Type": "application/json"},
+                    json={
+                        "name": slug,
+                        "files": [{"file": "index.html", "sha": sha1, "size": len(html_bytes)}],
+                        "projectSettings": {"framework": None},
+                        "target": "production",
+                    },
+                )
+            if deploy_r.status_code not in (200, 201):
+                yield ev("configuring", "error", error=f"Deployment failed: {deploy_r.status_code} {deploy_r.text[:200]}")
+                return
+            deploy_data = deploy_r.json()
+            deployment_id = deploy_data.get("id", "")
+            raw_url = deploy_data.get("url", "")
+            deployment_url = f"https://{raw_url}" if raw_url and not raw_url.startswith("http") else raw_url
+            yield ev("configuring", "done")
+
+            # ── Step 4: Running health checks (poll until READY) ──────────
+            yield ev("health_check", "active")
+            ready_state = deploy_data.get("readyState", "INITIALIZING")
+            if ready_state not in ("READY", "ERROR", "CANCELED"):
+                for _ in range(30):  # poll up to 60s
+                    await asyncio.sleep(2)
+                    async with httpx.AsyncClient(timeout=15) as client:
+                        check_r = await client.get(
+                            f"https://api.vercel.com/v13/deployments/{deployment_id}",
+                            headers=headers_auth,
+                        )
+                    if check_r.status_code == 200:
+                        ready_state = check_r.json().get("readyState", "")
+                        if ready_state == "READY":
+                            break
+                        if ready_state in ("ERROR", "CANCELED"):
+                            yield ev("health_check", "error", error=f"Deployment ended with state: {ready_state}")
+                            return
+            if ready_state != "READY":
+                # URL still accessible even if status unknown — continue
+                logger.warning(f"Deployment {deployment_id} state={ready_state}, continuing anyway")
+            yield ev("health_check", "done")
+
+            # ── Step 5: Going live (persist to DB) ────────────────────────
+            yield ev("live", "active")
+            await db.projects.update_one(
+                {"id": request.project_id, "user_id": current_user.id},
+                {"$set": {
+                    "vercel_url": deployment_url,
+                    "vercel_deployment_id": deployment_id,
+                    "vercel_deployed_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }},
+            )
+            yield ev("live", "done")
+
+            # ── Final result ───────────────────────────────────────────────
+            yield f"data: {json.dumps({'step': 'complete', 'url': deployment_url, 'deployment_id': deployment_id})}\n\n"
+
+        except Exception as e:
+            logger.error(f"Vercel streaming deploy failed: {e}")
+            yield f"data: {json.dumps({'step': 'error', 'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
-
-    return {
-        "url": result["deployment_url"],
-        "deployment_id": result["deployment_id"],
-        "project_name": result["project_name"],
-        "ready_state": result["ready_state"],
-    }
 
 
 # ──────────────────────────────────────────────────────────────

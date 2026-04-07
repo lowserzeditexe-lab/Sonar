@@ -569,6 +569,7 @@ export default function AppBuilder({ initialPrompt, initialTask, onReset, extern
             isDark={isDark}
             currentCode={currentCode}
             projectName={projectName}
+            user={user}
           />
         </div>
 
