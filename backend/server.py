@@ -1253,8 +1253,22 @@ async def deploy_vercel_stream(request: VercelDeployRequest, current_user: User 
                 return
             deploy_data = deploy_r.json()
             deployment_id = deploy_data.get("id", "")
+            project_id_vercel = deploy_data.get("projectId", "")
             raw_url = deploy_data.get("url", "")
             deployment_url = f"https://{raw_url}" if raw_url and not raw_url.startswith("http") else raw_url
+
+            # Disable SSO protection on the new project so it's publicly accessible
+            if project_id_vercel:
+                try:
+                    async with httpx.AsyncClient(timeout=15) as client:
+                        await client.patch(
+                            f"https://api.vercel.com/v9/projects/{project_id_vercel}",
+                            headers={**headers_auth, "Content-Type": "application/json"},
+                            json={"ssoProtection": None},
+                        )
+                except Exception as e:
+                    logger.warning(f"Could not disable SSO on Vercel project: {e}")
+
             yield ev("configuring", "done")
 
             # ── Step 4: Running health checks (poll until READY) ──────────
